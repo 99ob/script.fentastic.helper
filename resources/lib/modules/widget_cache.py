@@ -280,11 +280,114 @@ class WidgetCacheWorker:
         self.last_cache_change = 0.0
         self.last_reload_request = self.home.getProperty(RELOAD_REQUEST_PROPERTY)
         self.last_prune = 0
+        self.last_menu_repair = 0.0
         # Timed-out Kodi requests may continue in their daemon thread.
         self.lingering_pov = []
 
     def _abort(self, delay):
         return self.monitor.waitForAbort(delay)
+
+    def _recover_main_menu_includes(self):
+        """Regenerate missing/stale menu includes using saved FENtastic paths.
+
+        Only incorrect menu XML is written. Never touch widget snapshots, ratings,
+        artwork, or the menu settings database. CPaths requests a coordinated
+        reload only when its write changes the XML.
+        """
+        import html
+        import xml.etree.ElementTree as ET
+        from modules.cpath_maker import CPaths
+
+        definitions = (
+            ("movie", "movies", "MoviesMainMenu"),
+            ("tvshow", "tvshows", "TVShowsMainMenu"),
+            ("custom1", "custom1", "Custom1MainMenu"),
+            ("custom2", "custom2", "Custom2MainMenu"),
+            ("custom3", "custom3", "Custom3MainMenu"),
+        )
+        # Don't replace working menus when the database is temporarily locked.
+        settings = {}
+        try:
+            if xbmcvfs.exists(CONFIG_DB):
+                with sqlite3.connect(CONFIG_DB, timeout=1.0) as db:
+                    has_table = db.execute(
+                        "SELECT 1 FROM sqlite_master WHERE type='table' "
+                        "AND name='custom_paths'"
+                    ).fetchone()
+                    if has_table:
+                        settings = {
+                            name: (path or "", header or "")
+                            for name, path, header in db.execute(
+                                "SELECT cpath_setting, cpath_path, cpath_header "
+                                "FROM custom_paths WHERE cpath_setting IN "
+                                "('movie.main_menu','tvshow.main_menu',"
+                                "'custom1.main_menu','custom2.main_menu',"
+                                "'custom3.main_menu')"
+                            ).fetchall()
+                        }
+        except sqlite3.Error as exc:
+            xbmc.log("FENtastic menu recovery: DB temporarily unavailable: %s" % exc,
+                     xbmc.LOGWARNING)
+            return False
+
+        rebuilt = False
+        for kind, suffix, include_name in definitions:
+            if self.monitor.abortRequested() or xbmc.getSkinDir() != "skin.fentastic":
+                break
+            key = kind + ".main_menu"
+            saved_path, saved_header = settings.get(key, ("", ""))
+            path = "special://skin/xml/script-fentastic-main_menu_%s.xml" % suffix
+            valid = False
+            try:
+                if xbmcvfs.exists(path):
+                    with xbmcvfs.File(path, "r") as fh:
+                        root = ET.fromstring(fh.read())
+                    includes = [node for node in root.findall("include")
+                                if node.get("name") == include_name]
+                    if root.tag == "includes" and len(includes) == 1:
+                        items = includes[0].findall("item")
+                        if saved_path:
+                            expected_action = "ActivateWindow(Videos,%s,return)" % (
+                                html.unescape(saved_path))
+                            valid = (len(items) == 1 and
+                                     items[0].findtext("onclick", "") == expected_action and
+                                     items[0].findtext("label", "") == html.unescape(saved_header))
+                        else:
+                            valid = not items
+            except (OSError, IOError, ValueError, ET.ParseError):
+                valid = False
+            if valid:
+                continue
+
+            maker = None
+            try:
+                maker = CPaths(key)
+                current = maker.fetch_current_cpaths()
+                if saved_path and key in current:
+                    maker.refresh_cpaths = True
+                    maker.make_main_menu_xml(current)
+                else:
+                    maker.make_default_xml()
+                # Verify the expected include really exists; no blind success.
+                with xbmcvfs.File(path, "r") as fh:
+                    root = ET.fromstring(fh.read())
+                if root.tag != "includes" or len([
+                        node for node in root.findall("include")
+                        if node.get("name") == include_name]) != 1:
+                    raise ValueError("rebuilt include failed validation")
+                rebuilt = True
+                xbmc.log("FENtastic menu recovery: restored %s" % suffix,
+                         xbmc.LOGINFO)
+            except Exception as exc:
+                xbmc.log("FENtastic menu recovery: %s failed: %s" % (suffix, exc),
+                         xbmc.LOGERROR)
+            finally:
+                if maker is not None:
+                    try:
+                        maker.dbcon.close()
+                    except Exception:
+                        pass
+        return rebuilt
 
     def _migrate(self):
         """Migrate legacy widgets and install per-row dynamic refresh URLs."""
@@ -600,7 +703,13 @@ class WidgetCacheWorker:
         try:
             with connect():
                 pass
+            menus_rebuilt = self._recover_main_menu_includes()
             self._migrate()
+            if menus_rebuilt:
+                # Reload before slow widget provider calls delay the home menu.
+                if self._abort(1.1):
+                    return
+                self._reload_ui()
         except Exception as exc:
             xbmc.log("FENtastic cache: startup error: %s" % exc, xbmc.LOGERROR)
         while not self.monitor.abortRequested():
@@ -609,6 +718,12 @@ class WidgetCacheWorker:
                     return
                 continue
             self.modified = False
+            # Detect missing menus after skin updates or profile changes.
+            if time.monotonic() - self.last_menu_repair >= 30.0:
+                self.last_menu_repair = time.monotonic()
+                self._recover_main_menu_includes()
+            # Don't postpone a pending menu reload behind a slow provider.
+            self._reload_ui()
             if time.time() - self.last_prune >= 21600:
                 try:
                     with connect() as db:
