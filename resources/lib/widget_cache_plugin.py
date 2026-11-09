@@ -115,6 +115,48 @@ def _apply_video_tag(item, row):
             pass
 
 
+def _restore_info_tag(item, row):
+    """Copy the metadata actually present in the cached POV directory listing."""
+    try:
+        tag = item.getVideoInfoTag()
+    except (AttributeError, RuntimeError):
+        return
+    for field, method in (("year", "setYear"), ("duration", "setDuration"),
+                          ("season", "setSeason"), ("episode", "setEpisode")):
+        value = row.get(field)
+        if value is None or value == "":
+            continue
+        try:
+            # JSON-RPC duration values are in seconds; do not reinterpret as minutes.
+            getattr(tag, method)(int(float(value)))
+        except (TypeError, ValueError, AttributeError, RuntimeError):
+            pass
+    for field, method in (("title", "setTitle"), ("plot", "setPlot"),
+                          ("plotoutline", "setPlotOutline"), ("mpaa", "setMpaa"),
+                          ("premiered", "setPremiered"), ("firstaired", "setFirstAired"),
+                          ("tagline", "setTagLine"), ("originaltitle", "setOriginalTitle"),
+                          ("tvshowtitle", "setTvShowTitle")):
+        value = row.get(field)
+        if not value:
+            continue
+        try:
+            getattr(tag, method)(str(value))
+        except (TypeError, ValueError, AttributeError, RuntimeError):
+            pass
+    for field, method in (("genre", "setGenres"), ("director", "setDirectors"),
+                          ("writer", "setWriters"), ("studio", "setStudios")):
+        value = row.get(field)
+        if not value:
+            continue
+        values = value if isinstance(value, list) else [value]
+        try:
+            getattr(tag, method)([str(v) for v in values if v is not None and str(v)])
+        except (TypeError, ValueError, AttributeError, RuntimeError):
+            pass
+    if row.get("watchedepisodes") is not None:
+        item.setProperty("WatchedEpisodes", str(row["watchedepisodes"]))
+
+
 def _browse_original_action(source):
     """Offer POV's real context menu by opening the original source listing.
 
@@ -175,6 +217,8 @@ def serve():
                     xbmc.log("FENtastic cache: item metadata degraded: %s" % exc,
                              xbmc.LOGDEBUG)
             _apply_video_tag(item, row)
+            _restore_info_tag(item, row)
+            item.setProperty("fentastic.cache_item", "true")
             # The skin can identify cached media even if JSON-RPC omits
             # Genre or DBType. Original ratings layout remains unchanged.
             if "imdb" in _identifiers(row):

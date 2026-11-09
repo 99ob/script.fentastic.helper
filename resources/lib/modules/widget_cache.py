@@ -28,18 +28,20 @@ SECTIONS = (("movies", "movie", 19010), ("tvshows", "tvshow", 22010),
 PROPERTIES = (
     "title", "plot", "year", "thumbnail", "art", "fanart", "rating",
     "playcount", "resume", "duration", "premiered", "genre", "season",
-    "episode", "tvshowtitle", "imdbnumber", "originaltitle", "dateadded",
+    "episode", "showtitle", "imdbnumber", "originaltitle", "dateadded",
     "studio", "mpaa", "votes", "director", "writer", "trailer", "uniqueid",
+    "tagline", "plotoutline", "firstaired", "runtime", "userrating", "watchedepisodes",
 )
 VIDEO_FIELDS = (
     "title", "plot", "year", "rating", "playcount", "duration", "premiered",
     "genre", "season", "episode", "tvshowtitle", "originaltitle", "dateadded",
     "studio", "mpaa", "votes", "director", "writer", "trailer", "imdbnumber",
+    "tagline", "plotoutline",
 )
 CACHE_EXTRA_FIELDS = {"uniqueid", "resume", "userrating", "mediatype", "type",
-                      "tmdb_id", "tvdb_id", "imdb_id"}
+                      "tmdb_id", "tvdb_id", "imdb_id", "firstaired", "watchedepisodes"}
 # Keep older snapshots visible while forcing a one-time metadata refresh.
-CACHE_FORMAT_VERSION = "2"
+CACHE_FORMAT_VERSION = "3"
 
 
 def digest(path):
@@ -164,6 +166,10 @@ def _get_sources():
 def _request_directory(path):
     """JSON-RPC requests are serial here. Fall back if a media property is unsupported."""
     attempts = (("video", list(PROPERTIES)),
+                ("video", ["title", "plot", "year", "genre", "duration",
+                           "premiered", "studio", "mpaa", "director",
+                           "thumbnail", "art", "rating", "imdbnumber",
+                           "uniqueid", "showtitle", "season", "episode"]),
                 ("video", ["title", "plot", "thumbnail", "art", "rating",
                            "imdbnumber", "uniqueid"]),
                 ("files", ["title", "plot", "thumbnail", "art", "year", "playcount"]),
@@ -200,6 +206,15 @@ def _normalize(files):
         row = {k: v for k, v in item.items()
                if k in set(VIDEO_FIELDS) | CACHE_EXTRA_FIELDS |
                {"file", "filetype", "label", "thumbnail", "fanart", "art"}}
+        # Kodi JSON-RPC calls this showtitle, but ListItem.setInfo()
+        # and InfoTagVideo call it tvshowtitle. Never request the
+        # unsupported tvshowtitle property from Files.GetDirectory.
+        if item.get("showtitle"):
+            row["tvshowtitle"] = item["showtitle"]
+        if not row.get("duration") and item.get("runtime"):
+            row["duration"] = item["runtime"]
+        if not row.get("premiered") and item.get("firstaired"):
+            row["premiered"] = item["firstaired"]
         clean.append(row)
     return clean
 
@@ -301,8 +316,13 @@ class WidgetCacheWorker:
                 db.execute("INSERT OR REPLACE INTO snapshots(source_hash,updated_at,payload) "
                            "VALUES(?,?,?)", (h, time.time(), snapshot))
                 db.execute("DELETE FROM failures WHERE source_hash=?", (h,))
-            xbmc.log("FENtastic cache: updated widget %s (%d items)" %
-                     (slot, len(cleaned)), xbmc.LOGINFO)
+            available = {key: sum(1 for r in cleaned if r.get(key))
+                         for key in ("year", "genre", "duration", "mpaa", "studio")}
+            xbmc.log("FENtastic cache: updated widget %s (%d items; "
+                     "year=%d genre=%d runtime=%d mpaa=%d studio=%d)" %
+                     (slot, len(cleaned), available["year"], available["genre"],
+                      available["duration"], available["mpaa"],
+                      available["studio"]), xbmc.LOGINFO)
             if changed:
                 self.modified = True
                 self.pending_reload = True
