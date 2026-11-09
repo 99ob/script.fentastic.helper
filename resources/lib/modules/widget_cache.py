@@ -3,7 +3,8 @@
 
 Kodi 22 prototype: Files.GetDirectory -> normalized JSON -> SQLite -> plugin listing.
 Normally one upstream request is active. A timed-out request may remain active
-while the next starts; at most two calls may overlap. Plugin listings read SQLite.
+while the next starts; at most two calls may overlap. Late successes within
+30 additional seconds update SQLite on the coordinator worker.
 """
 import hashlib
 from contextlib import contextmanager
@@ -47,6 +48,7 @@ CACHE_EXTRA_FIELDS = {"uniqueid", "resume", "userrating", "mediatype", "type",
 CACHE_FORMAT_VERSION = "3"
 # Experimental: a five-second SOFT timeout, not a Kodi-side hard cancellation.
 POV_SOFT_TIMEOUT = 5.0
+POV_LATE_GRACE = 30.0
 MAX_ACTIVE_POV_REQUESTS = 2
 
 
@@ -332,24 +334,116 @@ class WidgetCacheWorker:
         xbmc.executebuiltin("ReloadSkin()")
         return True
 
+    def _record_failed_refresh(self, slot, path, error):
+        """Record real failures, including requests that exceed the late grace."""
+        try:
+            with connect() as db:
+                h = digest(path)
+                old = db.execute("SELECT tries FROM failures WHERE source_hash=?",
+                                 (h,)).fetchone()
+                tries = 1 + (old[0] if old else 0)
+                retry = time.time() + min(900, 30 * (2 ** min(tries, 5)))
+                db.execute("INSERT OR REPLACE INTO failures VALUES(?,?,?,?)",
+                           (h, retry, tries, str(error)[:250]))
+        except sqlite3.Error:
+            pass
+        xbmc.log("FENtastic cache: failed to refresh %s: %s" %
+                 (slot, error), xbmc.LOGWARNING)
+
+    def _save_snapshot(self, slot, path, header, files, request_started_at=None):
+        """Commit a successful response, rejecting stale or reconfigured rows.
+
+        Only the coordinating worker invokes this method. A late response never
+        overwrites a snapshot refreshed after that request originally began.
+        """
+        cleaned = _normalize(files)
+        snapshot = json.dumps(cleaned, ensure_ascii=False, separators=(",", ":"))
+        h = digest(path)
+        with connect() as db:
+            linked = db.execute("SELECT source_hash FROM sources WHERE slot=?",
+                                (slot,)).fetchone()
+            if not linked or linked[0] != h:
+                xbmc.log("FENtastic cache: ignore obsolete response for widget %s "
+                         "(source configuration changed)" % slot, xbmc.LOGINFO)
+                return False
+            cached = db.execute(
+                "SELECT updated_at,payload FROM snapshots WHERE source_hash=?", (h,)
+            ).fetchone()
+            if (request_started_at is not None and cached and
+                    cached[0] > request_started_at):
+                xbmc.log("FENtastic cache: ignore stale late response for widget %s "
+                         "(newer snapshot already exists)" % slot, xbmc.LOGINFO)
+                return False
+            changed = not cached or cached[1] != snapshot
+            db.execute("INSERT OR REPLACE INTO snapshots(source_hash,updated_at,payload) "
+                       "VALUES(?,?,?)", (h, time.time(), snapshot))
+            db.execute("DELETE FROM failures WHERE source_hash=?", (h,))
+        available = {key: sum(1 for r in cleaned if r.get(key))
+                     for key in ("year", "genre", "duration", "mpaa", "studio")}
+        xbmc.log("FENtastic cache: updated widget %s (%d items; "
+                 "year=%d genre=%d runtime=%d mpaa=%d studio=%d)" %
+                 (slot, len(cleaned), available["year"], available["genre"],
+                  available["duration"], available["mpaa"],
+                  available["studio"]), xbmc.LOGINFO)
+        if changed:
+            self.modified = True
+            self.pending_reload = True
+            self.last_cache_change = time.monotonic()
+        return changed
+
     def _active_fetches(self):
-        """Prune finished timed-out calls; never allow unlimited overlap."""
+        """Collect late replies, enforce grace and count still-running Kodi calls.
+
+        Worker-owned SQLite writes are performed here, so a late success can be
+        accepted without an unsafe database write from a POV request thread.
+        """
         still_active = []
-        for thread, slot in self.lingering_pov:
+        for job in self.lingering_pov:
+            thread = job["thread"]
+            slot = job["slot"]
             if thread.is_alive():
-                still_active.append((thread, slot))
-            else:
-                xbmc.log("FENtastic cache: late POV response for %s finished "
-                         "(discarded; normal retry rules apply)" % slot,
-                         xbmc.LOGINFO)
+                if not job["expired"] and time.monotonic() > job["deadline"]:
+                    job["expired"] = True
+                    self._record_failed_refresh(slot, job["path"],
+                                                "late POV response exceeded 30s grace")
+                    xbmc.log("FENtastic cache: widget %s late grace expired; "
+                             "Kodi request still active, results will be discarded" %
+                             slot, xbmc.LOGWARNING)
+                still_active.append(job)
+                continue
+
+            # The thread records its exact completion time; processing may
+            # occur later if the worker was busy with other widget rows.
+            outcome = job["outcome"]
+            finished = outcome.get("finished_at", float("inf"))
+            if finished > job["deadline"]:
+                if not job["expired"]:
+                    self._record_failed_refresh(slot, job["path"],
+                                                "late POV response exceeded 30s grace")
+                xbmc.log("FENtastic cache: widget %s finished too late; "
+                         "response discarded" % slot, xbmc.LOGINFO)
+                continue
+            if self.monitor.abortRequested():
+                continue
+            if "error" in outcome:
+                self._record_failed_refresh(slot, job["path"], outcome["error"])
+                continue
+            try:
+                self._save_snapshot(slot, job["path"], job["header"],
+                                    outcome["files"], job["started_at"])
+                xbmc.log("FENtastic cache: accepted late POV response for widget %s "
+                         "(within 30s grace)" % slot, xbmc.LOGINFO)
+            except Exception as exc:
+                self._record_failed_refresh(slot, job["path"], exc)
         self.lingering_pov = still_active
         return len(still_active)
 
-    def _request_with_soft_timeout(self, slot, path):
-        """Return after 5s if stalled; the Kodi call cannot be cancelled.
+    def _request_with_soft_timeout(self, slot, path, header):
+        """Move to next row after 5s, but accept success for 30 more seconds.
 
-        No SQLite access occurs in the request thread. Late responses are
-        discarded, so they can never overwrite a newer cache snapshot.
+        Background threads ONLY execute Kodi Files.GetDirectory; they never
+        touch SQLite or the skin. Their completed response is collected later
+        by _active_fetches() on the coordinating worker thread.
         """
         outcome = {}
 
@@ -358,10 +452,13 @@ class WidgetCacheWorker:
                 outcome["files"] = _request_directory(path)
             except Exception as exc:
                 outcome["error"] = exc
+            finally:
+                outcome["finished_at"] = time.monotonic()
 
         fetch_thread = Thread(target=fetch, daemon=True,
                               name="FENtastic-POV-%s" % slot)
         started = time.monotonic()
+        started_at = time.time()
         fetch_thread.start()
         end = started + POV_SOFT_TIMEOUT
         while fetch_thread.is_alive():
@@ -370,22 +467,28 @@ class WidgetCacheWorker:
                 break
             fetch_thread.join(min(0.2, remaining))
             if self.monitor.abortRequested():
-                # Kodi is exiting; daemon thread cannot be safely cancelled.
                 raise RuntimeError("Kodi shutdown during POV request")
         if fetch_thread.is_alive():
-            self.lingering_pov.append((fetch_thread, slot))
+            self.lingering_pov.append({
+                "thread": fetch_thread, "slot": slot, "path": path,
+                "header": header, "outcome": outcome,
+                "started_at": started_at,
+                "deadline": end + POV_LATE_GRACE,
+                "expired": False,
+            })
             xbmc.log("FENtastic cache: POV widget %s exceeded %.1fs; "
-                     "defer this row and try the next (request may remain "
-                     "active; at most two can overlap)" %
-                     (slot, POV_SOFT_TIMEOUT), xbmc.LOGWARNING)
-            raise TimeoutError("POV request exceeded %.1fs soft timeout" %
-                               POV_SOFT_TIMEOUT)
+                     "continuing to next row, keeping result for %.0fs more "
+                     "(max two overlapping POV calls)" %
+                     (slot, POV_SOFT_TIMEOUT, POV_LATE_GRACE), xbmc.LOGWARNING)
+            return None  # Deferred, not yet a failed fetch.
         if "error" in outcome:
             raise outcome["error"]
         return outcome["files"]
 
     def _load(self, slot, path, header):
         try:
+            # Process any late responses *before* reading snapshot freshness.
+            self._active_fetches()
             with connect() as db:
                 h = _remember(db, slot, path, header)
                 cached = db.execute(
@@ -399,44 +502,19 @@ class WidgetCacheWorker:
                 return False
             if fail and now < fail[0]:
                 return False
-            # Normal rows are serial. One timed-out Kodi call may still be
-            # running when we attempt the next; hard-cap concurrent calls at 2.
-            if self._active_fetches() >= MAX_ACTIVE_POV_REQUESTS:
-                return False  # Defer; do not record a failure or destroy cache.
-            files = self._request_with_soft_timeout(slot, path)
-            cleaned = _normalize(files)
-            snapshot = json.dumps(cleaned, ensure_ascii=False, separators=(",", ":"))
-            changed = not cached or cached[1] != snapshot
-            with connect() as db:
-                db.execute("INSERT OR REPLACE INTO snapshots(source_hash,updated_at,payload) "
-                           "VALUES(?,?,?)", (h, time.time(), snapshot))
-                db.execute("DELETE FROM failures WHERE source_hash=?", (h,))
-            available = {key: sum(1 for r in cleaned if r.get(key))
-                         for key in ("year", "genre", "duration", "mpaa", "studio")}
-            xbmc.log("FENtastic cache: updated widget %s (%d items; "
-                     "year=%d genre=%d runtime=%d mpaa=%d studio=%d)" %
-                     (slot, len(cleaned), available["year"], available["genre"],
-                      available["duration"], available["mpaa"],
-                      available["studio"]), xbmc.LOGINFO)
-            if changed:
-                self.modified = True
-                self.pending_reload = True
-                self.last_cache_change = time.monotonic()
-            return changed
+            # Never request the same source twice while a soft-timed-out call
+            # is still in flight; retain the limit of two total POV calls.
+            if any(job["path"] == path for job in self.lingering_pov):
+                return False
+            if len(self.lingering_pov) >= MAX_ACTIVE_POV_REQUESTS:
+                return False
+            files = self._request_with_soft_timeout(slot, path, header)
+            if files is None:
+                return False  # Will be saved later if successful within grace.
+            return self._save_snapshot(slot, path, header, files)
         except Exception as exc:
-            # Network/provider failure never deletes the last good cached snapshot.
-            try:
-                with connect() as db:
-                    h = digest(path)
-                    old = db.execute("SELECT tries FROM failures WHERE source_hash=?", (h,)).fetchone()
-                    tries = 1 + (old[0] if old else 0)
-                    retry = time.time() + min(900, 30 * (2 ** min(tries, 5)))
-                    db.execute("INSERT OR REPLACE INTO failures VALUES(?,?,?,?)",
-                               (h, retry, tries, str(exc)[:250]))
-            except sqlite3.Error:
-                pass
-            xbmc.log("FENtastic cache: failed to refresh %s: %s" %
-                     (slot, exc), xbmc.LOGWARNING)
+            # Failure must never delete the last good SQLite snapshot.
+            self._record_failed_refresh(slot, path, exc)
             return False
 
     def _child(self, entry):
