@@ -15,6 +15,8 @@ import xbmc
 import xbmcgui
 import xbmcvfs
 
+from modules.skin_reload import RELOAD_REQUEST_PROPERTY, request_skin_reload
+
 DB = xbmcvfs.translatePath(
     "special://profile/addon_data/script.fentastic.helper/widget_cache.db"
 )
@@ -236,10 +238,11 @@ class WidgetCacheWorker:
     def __init__(self, monitor):
         self.monitor = monitor
         self.home = xbmcgui.Window(10000)
-        self.first_reload = False
-        self.last_reload = 0
+        self.last_reload = 0.0
         self.modified = False
         self.pending_reload = False
+        self.last_cache_change = 0.0
+        self.last_reload_request = self.home.getProperty(RELOAD_REQUEST_PROPERTY)
         self.last_prune = 0
 
     def _abort(self, delay):
@@ -276,19 +279,48 @@ class WidgetCacheWorker:
                     maker.dbcon.close()
         if changed:
             xbmc.log("FENtastic cache: rebuilt widget includes", xbmc.LOGINFO)
-            xbmc.executebuiltin("ReloadSkin()")
-            self._abort(1)
+            request_skin_reload("widget XML migration")
 
-    def _reload_ui(self, first=False):
-        now = time.time()
-        if xbmcgui.getCurrentWindowId() != 10000:
+    def _reload_ui(self):
+        """One coordinator for configuration edits and cached-data changes.
+
+        Runs only between upstream JSON-RPC requests, never during one. It
+        intentionally reloads at most once per completed cache batch.
+        """
+        token = self.home.getProperty(RELOAD_REQUEST_PROPERTY)
+        configuration_pending = bool(token) and token != self.last_reload_request
+        if not configuration_pending and not self.pending_reload:
             return False
-        # At most two reloads per cold-fill batch: first data, then the rest.
-        min_delay = 3 if first else 5
-        if now - self.last_reload < min_delay:
+
+        now_ns = time.monotonic_ns()
+        now = now_ns / 1_000_000_000.0
+        if configuration_pending:
+            try:
+                request_ns = int(token)
+            except (ValueError, TypeError):
+                request_ns = now_ns
+            if now_ns - request_ns < 3_000_000_000:
+                return False
+        if self.pending_reload and now - self.last_cache_change < 3.0:
             return False
+        if now - self.last_reload < 8.0:
+            return False
+
+        current_window = xbmcgui.getCurrentWindowId()
+        # Keep the original dialog safety guard from cpath_maker.py.
+        if current_window == 10035:
+            return False
+        # Don't interrupt browsing/playback just for a background cache update.
+        # Explicit widget/menu edits still reload even outside Home.
+        if not configuration_pending and current_window != 10000:
+            return False
+
         self.last_reload = now
-        xbmc.log("FENtastic cache: refreshing skin for cached widget results", xbmc.LOGINFO)
+        self.pending_reload = False
+        if configuration_pending:
+            self.last_reload_request = token
+        xbmc.log("FENtastic reload: one coordinated skin reload after widget "
+                 "edit/cache refresh", xbmc.LOGINFO)
         xbmc.executebuiltin("ReloadSkin()")
         return True
 
@@ -326,10 +358,7 @@ class WidgetCacheWorker:
             if changed:
                 self.modified = True
                 self.pending_reload = True
-                if not self.first_reload and len(cleaned) > 0 and not cached:
-                    self.first_reload = True
-                    if self._reload_ui(first=True):
-                        self.pending_reload = False
+                self.last_cache_change = time.monotonic()
             return changed
         except Exception as exc:
             # Network/provider failure never deletes the last good cached snapshot.
@@ -412,6 +441,8 @@ class WidgetCacheWorker:
                     pass
             rows = self._configured()
             if not rows:
+                # Still process pending menu/widget layout edits with zero rows.
+                self._reload_ui()
                 if self._abort(3):
                     return
                 continue
@@ -421,7 +452,8 @@ class WidgetCacheWorker:
                 self._load(entry["slot"], entry["path"], entry["header"])
                 if self._abort(0.05):
                     return
-            if self.pending_reload and self._reload_ui():
-                self.pending_reload = False
+            # This is outside the request loop: no concurrent upstream
+            # Files.GetDirectory call is active in this worker.
+            self._reload_ui()
             if self._abort(5):
                 return

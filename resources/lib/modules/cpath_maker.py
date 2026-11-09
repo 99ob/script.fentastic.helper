@@ -2,8 +2,8 @@
 import xbmc, xbmcgui, xbmcvfs
 import json
 import sqlite3 as database
-from threading import Thread
 from modules import xmls
+from modules.skin_reload import request_skin_reload
 
 # from modules.logger import logger
 
@@ -325,7 +325,7 @@ class CPaths:
         with xbmcvfs.File(xml_file, "w") as f:
             f.write(final_format)
         if reload_skin:
-            Thread(target=self.reload_skin).start()
+            self.reload_skin()
 
     def handle_path_browser_results(self, cpath_setting, context):
         result = self.path_browser()
@@ -640,14 +640,9 @@ class CPaths:
             )
 
     def reload_skin(self):
-        if window.getProperty("fentastic.clear_path_refresh") == "true":
-            return
-        window.setProperty("fentastic.clear_path_refresh", "true")
-        while xbmcgui.getCurrentWindowId() == 10035:
-            xbmc.sleep(500)
-        window.setProperty("fentastic.clear_path_refresh", "")
-        xbmc.sleep(200)
-        xbmc.executebuiltin("ReloadSkin()")
+        # The persistent cache worker is the sole owner of ReloadSkin().
+        # Signal after XML writes; it waits for a quiet period and dialog close.
+        request_skin_reload("widget/menu XML updated")
 
     def clean_header(self, header):
         return header.replace("[B]", "").replace("[/B]", "").replace(" >>", "")
@@ -675,7 +670,7 @@ class CPaths:
         with xbmcvfs.File(xml_file, "w") as f:
             f.write(final_format)
         self.update_skin_strings()
-        Thread(target=self.reload_skin).start()
+        self.reload_skin()
 
 
 def files_get_directory(directory, properties=["title", "file", "thumbnail"]):
