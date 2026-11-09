@@ -66,7 +66,8 @@ class RatingsService(xbmc.Monitor):
                 xbmc.executebuiltin("Skin.ToggleSetting(TrailerPlaying)")
                 self.waitForAbort(0.2)
                 continue
-            imdb_id = self.get_infolabel("ListItem.IMDBNumber")
+            imdb_id = (self.get_infolabel("ListItem.IMDBNumber") or
+                       self.get_infolabel("ListItem.Property(imdb_id)"))
             set_property = self.window(self.get_window_id()).setProperty
             get_property = self.window(self.get_window_id()).getProperty
             cached_ratings = get_property(f"fentastic.cachedRatings.{imdb_id}")

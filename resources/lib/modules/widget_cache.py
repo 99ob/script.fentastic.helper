@@ -36,6 +36,10 @@ VIDEO_FIELDS = (
     "genre", "season", "episode", "tvshowtitle", "originaltitle", "dateadded",
     "studio", "mpaa", "votes", "director", "writer", "trailer", "imdbnumber",
 )
+CACHE_EXTRA_FIELDS = {"uniqueid", "resume", "userrating", "mediatype", "type",
+                      "tmdb_id", "tvdb_id", "imdb_id"}
+# Keep older snapshots visible while forcing a one-time metadata refresh.
+CACHE_FORMAT_VERSION = "2"
 
 
 def digest(path):
@@ -55,6 +59,12 @@ def connect():
                    "updated_at REAL NOT NULL, payload TEXT NOT NULL)")
         db.execute("CREATE TABLE IF NOT EXISTS failures (source_hash TEXT PRIMARY KEY, "
                    "retry_after REAL NOT NULL, tries INTEGER NOT NULL, error TEXT)")
+        db.execute("CREATE TABLE IF NOT EXISTS cache_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+        version_row = db.execute("SELECT value FROM cache_meta WHERE key='format'").fetchone()
+        if version_row is None or version_row[0] != CACHE_FORMAT_VERSION:
+            db.execute("UPDATE snapshots SET updated_at=0")
+            db.execute("INSERT OR REPLACE INTO cache_meta(key,value) VALUES ('format',?)",
+                       (CACHE_FORMAT_VERSION,))
         db.commit()
         yield db
         db.commit()
@@ -87,6 +97,20 @@ def get_snapshot(slot, source_override=None):
         xbmc.log("FENtastic cache: failed to read widget %s: %s" %
                  (slot, exc), xbmc.LOGWARNING)
     return None
+
+
+def get_source(slot, source_override=None):
+    """Return the original provider directory for the cached row's context menu."""
+    if source_override:
+        return source_override
+    try:
+        with connect() as db:
+            row = db.execute("SELECT source FROM sources WHERE slot=?", (slot,)).fetchone()
+        return row[0] if row else ""
+    except sqlite3.Error as exc:
+        xbmc.log("FENtastic cache: cannot read source for %s: %s" %
+                 (slot, exc), xbmc.LOGWARNING)
+        return ""
 
 
 def ttl(path, label):
@@ -140,6 +164,8 @@ def _get_sources():
 def _request_directory(path):
     """JSON-RPC requests are serial here. Fall back if a media property is unsupported."""
     attempts = (("video", list(PROPERTIES)),
+                ("video", ["title", "plot", "thumbnail", "art", "rating",
+                           "imdbnumber", "uniqueid"]),
                 ("files", ["title", "plot", "thumbnail", "art", "year", "playcount"]),
                 ("files", ["title", "thumbnail"]))
     last_error = ""
@@ -172,7 +198,8 @@ def _normalize(files):
             continue
         # Preserve original POV URLs; do not proxy playback or action routes.
         row = {k: v for k, v in item.items()
-               if k in set(VIDEO_FIELDS) | {"file", "filetype", "label", "thumbnail", "fanart", "art"}}
+               if k in set(VIDEO_FIELDS) | CACHE_EXTRA_FIELDS |
+               {"file", "filetype", "label", "thumbnail", "fanart", "art"}}
         clean.append(row)
     return clean
 
