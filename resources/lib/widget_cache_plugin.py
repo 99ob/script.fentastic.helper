@@ -235,4 +235,8 @@ def serve():
 
 
 if __name__ == "__main__":
-    serve()
+    if parse_qs(sys.argv[2].lstrip("?")).get("mode", [""])[0] == "search_history":
+        from modules.search_history_plugin import serve_search_history
+        serve_search_history()
+    else:
+        serve()

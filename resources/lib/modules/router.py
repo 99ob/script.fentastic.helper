@@ -54,6 +54,14 @@ def routing():
 
         return SPaths().search_input()
 
+    if mode == "toggle_search_provider":
+        from modules.search_utils import SPaths
+        return SPaths().toggle_search_provider()
+
+    if mode == "re_search_id":
+        from modules.search_utils import SPaths
+        return SPaths().re_search_id(_get("spath_id", ""))
+
     if mode == "remove_all_spaths":
         from modules.search_utils import SPaths
 
