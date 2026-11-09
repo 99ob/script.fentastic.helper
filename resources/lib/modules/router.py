@@ -13,6 +13,10 @@ def routing():
     params = dict(parse_qsl("&".join(args), keep_blank_values=True))
     _get = params.get
     mode = _get("mode", "check_for_update")
+    if mode == "refresh_widget":
+        from modules.widget_refresh import refresh_widget
+        return refresh_widget(_get("list_id", ""))
+
     if mode == "widget_monitor":
         from modules.widget_utils import widget_monitor
 

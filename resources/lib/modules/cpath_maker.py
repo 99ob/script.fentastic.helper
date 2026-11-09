@@ -4,6 +4,7 @@ import json
 import sqlite3 as database
 from modules import xmls
 from modules.skin_reload import request_skin_reload
+from modules.widget_refresh import revision_url
 
 # from modules.logger import logger
 
@@ -311,7 +312,7 @@ class CPaths:
             )
             body = body.format(
                 cpath_type=cpath_type,
-                cpath_path=cpath_path,
+                cpath_path=revision_url(cpath_path, cpath_list_id),
                 cpath_header=cpath_header,
                 cpath_list_id=cpath_list_id,
             )
