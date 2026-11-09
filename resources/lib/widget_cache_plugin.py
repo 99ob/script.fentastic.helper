@@ -176,6 +176,53 @@ def _browse_original_action(source):
     return ("Open original POV list (full menu)", "ActivateWindow(Videos,%s,return)" % safe)
 
 
+def _pov_context_actions(row, source):
+    """Restore POV per-title actions when cached metadata contains a valid ID."""
+    if not isinstance(source, str) or not source.startswith("plugin://plugin.video.pov/"):
+        return []
+    ids = _identifiers(row)
+    tmdb_id = ids.get("tmdb")
+    if not tmdb_id or not tmdb_id.isdigit():
+        return []
+    try:
+        src_args = parse_qs(urlsplit(source).query)
+        item_args = parse_qs(urlsplit(row.get("file") or "").query)
+    except (ValueError, TypeError):
+        return []
+    kind = _id_string(row.get("mediatype") or row.get("type") or
+                      item_args.get("mediatype", [""])[0]).lower()
+    if kind not in ("movie", "tvshow"):
+        source_mode = src_args.get("mode", [""])[0]
+        if source_mode == "build_movie_list":
+            kind = "movie"
+        elif source_mode == "build_tvshow_list":
+            kind = "tvshow"
+        else:
+            return []
+    from urllib.parse import urlencode
+
+    def action(mode, **extra):
+        args = {"mode": mode, "mediatype": kind, "tmdb_id": tmdb_id}
+        args.update(extra)
+        return "RunPlugin(plugin://plugin.video.pov/?%s)" % urlencode(args)
+
+    common = {"imdb_id": ids.get("imdb", "None"),
+              "tvdb_id": ids.get("tvdb", "None")}
+    menu = [
+        ("Options...", action("options_menu_choice", is_widget="True")),
+        ("Extras...", action("extras_menu_choice", is_widget="True")),
+        ("Trakt Lists Manager", action("trakt_manager_choice", **common)),
+        ("MDBList Manager", action("mdbl_manager_choice", **common)),
+        ("TMDb Lists Manager", action("tmdb_manager_choice", **common)),
+    ]
+    title = _id_string(row.get("title") or row.get("label"))
+    if title:
+        menu.append(("Favorites Manager", action("favorites_choice", title=title)))
+        if kind == "tvshow":
+            menu.append(("Dropped Manager", action("dropped_choice", title=title)))
+    return menu
+
+
 def serve():
     # FENTASTIC_EMPTY_PROVIDER_LISTING_20261109
     if len(sys.argv) > 2 and 'fentastic_empty=1' in sys.argv[2].lstrip('?').split('&'):
@@ -229,7 +276,10 @@ def serve():
             # Genre or DBType. Original ratings layout remains unchanged.
             if "imdb" in _identifiers(row):
                 item.setProperty("fentastic.cache_item", "true")
-            if open_source_action:
+            pov_menu = _pov_context_actions(row, source)
+            if pov_menu:
+                item.addContextMenuItems(pov_menu)
+            elif open_source_action:
                 item.addContextMenuItems([open_source_action])
             if not folder:
                 item.setProperty("IsPlayable", "true")
