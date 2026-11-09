@@ -20,6 +20,7 @@ from modules.skin_reload import RELOAD_REQUEST_PROPERTY, request_skin_reload
 DB = xbmcvfs.translatePath(
     "special://profile/addon_data/script.fentastic.helper/widget_cache.db"
 )
+RESET_CACHE_PROPERTY = "fentastic.widget_cache.reset_requested"
 CONFIG_DB = xbmcvfs.translatePath(
     "special://profile/addon_data/script.fentastic.helper/cpath_cache.db"
 )
@@ -244,6 +245,7 @@ class WidgetCacheWorker:
         self.last_cache_change = 0.0
         self.last_reload_request = self.home.getProperty(RELOAD_REQUEST_PROPERTY)
         self.last_prune = 0
+        self.cold_rebuild_started = None
 
     def _abort(self, delay):
         return self.monitor.waitForAbort(delay)
@@ -280,6 +282,40 @@ class WidgetCacheWorker:
         if changed:
             xbmc.log("FENtastic cache: rebuilt widget includes", xbmc.LOGINFO)
             request_skin_reload("widget XML migration")
+
+    def _reset_cache_if_requested(self):
+        """Cold-build test: atomically empty ONLY widget-cache data.
+
+        This is executed by the existing single sequential cache worker,
+        between Files.GetDirectory requests. Deleting the live SQLite file
+        is unsafe on Windows because widget plugin calls may still be reading
+        it; emptying the data tables produces the same cold-cache behavior.
+        The separate cpath_cache.db (user's widget setup) is never touched.
+        """
+        if self.home.getProperty(RESET_CACHE_PROPERTY) != "true":
+            return False
+        try:
+            with connect() as db:
+                db.execute("DELETE FROM snapshots")
+                db.execute("DELETE FROM sources")
+                db.execute("DELETE FROM failures")
+        except sqlite3.Error as exc:
+            xbmc.log("FENtastic cache: cold-build reset failed: %s" % exc,
+                     xbmc.LOGERROR)
+            return False  # Leave the request pending to retry later.
+        self.home.clearProperty(RESET_CACHE_PROPERTY)
+        self.pending_reload = False
+        self.last_cache_change = 0.0
+        self.last_reload_request = self.home.getProperty(RELOAD_REQUEST_PROPERTY)
+        self.cold_rebuild_started = time.monotonic()
+        self.last_reload = self.cold_rebuild_started
+        xbmc.log("FENtastic cache: cold-build test started; cleared SQLite "
+                 "widget snapshots/sources/failures (widget configuration kept)",
+                 xbmc.LOGINFO)
+        # Unlike normal automatic reloads, this explicit menu action reloads
+        # immediately after the transaction commits, before a new POV fetch.
+        xbmc.executebuiltin("ReloadSkin()")
+        return True
 
     def _reload_ui(self):
         """One coordinator for configuration edits and cached-data changes.
@@ -426,6 +462,10 @@ class WidgetCacheWorker:
                 if self._abort(2):
                     return
                 continue
+            if self._reset_cache_if_requested():
+                if self._abort(0.5):
+                    return
+                continue
             self.modified = False
             if time.time() - self.last_prune >= 21600:
                 try:
@@ -452,8 +492,22 @@ class WidgetCacheWorker:
                 self._load(entry["slot"], entry["path"], entry["header"])
                 if self._abort(0.05):
                     return
+                if self.home.getProperty(RESET_CACHE_PROPERTY) == "true":
+                    break
+            if self._reset_cache_if_requested():
+                if self._abort(0.5):
+                    return
+                continue
+            if self.cold_rebuild_started is not None:
+                elapsed = time.monotonic() - self.cold_rebuild_started
+                xbmc.log("FENtastic cache: cold-build first sequential pass "
+                         "finished in %.2f seconds (%d configured rows checked)" %
+                         (elapsed, len(rows)), xbmc.LOGINFO)
+                self.cold_rebuild_started = None
             # This is outside the request loop: no concurrent upstream
             # Files.GetDirectory call is active in this worker.
             self._reload_ui()
-            if self._abort(5):
+            # When data changed, poll for the existing 1-second debounce;
+            # don't add an unrelated five-second wait to the benchmark.
+            if self._abort(0.5 if self.pending_reload else 5):
                 return
