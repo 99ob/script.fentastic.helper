@@ -601,18 +601,25 @@ class CPaths:
     def handle_widget_remake(self, result, cpath_setting):
         cpath_path, default_header = result.get("file", None), result.get("label", None)
         cpath_header = self.widget_header(default_header)
+        if not cpath_header:
+            return
         self.create_and_update_widget(cpath_setting, cpath_path, cpath_header)
 
     def create_and_update_widget(
         self, cpath_setting, cpath_path, cpath_header, add_to_db=True
     ):
         widget_type = self.widget_type()
+        if widget_type is None:
+            # Display-type chooser was cancelled; preserve widget settings.
+            return
         if widget_type[0] == "Category" and dialog.yesno(
             "Stacked widget",
             "Make [COLOR accent_color][B]%s[/B][/COLOR] a stacked widget?"
             % cpath_header,
         ):
             widget_type = self.widget_type(label="Choose stacked widget display type")
+            if widget_type is None:
+                return
             cpath_type, cpath_label = "%sStacked" % widget_type[
                 1
             ], "%s | Stacked (%s) | Category" % (cpath_header, widget_type[0])
