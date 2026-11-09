@@ -1,15 +1,16 @@
 # -*- coding: utf-8 -*-
-"""Persistent, single-upstream-request FENtastic home widget cache.
+"""Persistent FENtastic widget cache with an experimental 5s POV soft timeout.
 
 Kodi 22 prototype: Files.GetDirectory -> normalized JSON -> SQLite -> plugin listing.
-Upstream requests run ONLY in this one worker. Plugin instances serve local SQLite.
-No dynamic empty XML paths, no Python plugin recursion, no external network service.
+Normally one upstream request is active. A timed-out request may remain active
+while the next starts; at most two calls may overlap. Plugin listings read SQLite.
 """
 import hashlib
 from contextlib import contextmanager
 import json
 import sqlite3
 import time
+from threading import Thread
 
 import xbmc
 import xbmcgui
@@ -44,6 +45,9 @@ CACHE_EXTRA_FIELDS = {"uniqueid", "resume", "userrating", "mediatype", "type",
                       "tmdb_id", "tvdb_id", "imdb_id", "firstaired", "watchedepisodes"}
 # Keep older snapshots visible while forcing a one-time metadata refresh.
 CACHE_FORMAT_VERSION = "3"
+# Experimental: a five-second SOFT timeout, not a Kodi-side hard cancellation.
+POV_SOFT_TIMEOUT = 5.0
+MAX_ACTIVE_POV_REQUESTS = 2
 
 
 def digest(path):
@@ -244,6 +248,8 @@ class WidgetCacheWorker:
         self.last_cache_change = 0.0
         self.last_reload_request = self.home.getProperty(RELOAD_REQUEST_PROPERTY)
         self.last_prune = 0
+        # Timed-out Kodi requests may continue in their daemon thread.
+        self.lingering_pov = []
 
     def _abort(self, delay):
         return self.monitor.waitForAbort(delay)
@@ -284,9 +290,11 @@ class WidgetCacheWorker:
     def _reload_ui(self):
         """One coordinator for configuration edits and cached-data changes.
 
-        Runs only between upstream JSON-RPC requests, never during one. It
-        intentionally reloads at most once per completed cache batch.
+        Do not reload while any timed-out upstream JSON-RPC call is still active.
+        Reload normally after the completed cache pass when Kodi is safe.
         """
+        if self._active_fetches():
+            return False
         token = self.home.getProperty(RELOAD_REQUEST_PROPERTY)
         configuration_pending = bool(token) and token != self.last_reload_request
         if not configuration_pending and not self.pending_reload:
@@ -324,6 +332,58 @@ class WidgetCacheWorker:
         xbmc.executebuiltin("ReloadSkin()")
         return True
 
+    def _active_fetches(self):
+        """Prune finished timed-out calls; never allow unlimited overlap."""
+        still_active = []
+        for thread, slot in self.lingering_pov:
+            if thread.is_alive():
+                still_active.append((thread, slot))
+            else:
+                xbmc.log("FENtastic cache: late POV response for %s finished "
+                         "(discarded; normal retry rules apply)" % slot,
+                         xbmc.LOGINFO)
+        self.lingering_pov = still_active
+        return len(still_active)
+
+    def _request_with_soft_timeout(self, slot, path):
+        """Return after 5s if stalled; the Kodi call cannot be cancelled.
+
+        No SQLite access occurs in the request thread. Late responses are
+        discarded, so they can never overwrite a newer cache snapshot.
+        """
+        outcome = {}
+
+        def fetch():
+            try:
+                outcome["files"] = _request_directory(path)
+            except Exception as exc:
+                outcome["error"] = exc
+
+        fetch_thread = Thread(target=fetch, daemon=True,
+                              name="FENtastic-POV-%s" % slot)
+        started = time.monotonic()
+        fetch_thread.start()
+        end = started + POV_SOFT_TIMEOUT
+        while fetch_thread.is_alive():
+            remaining = end - time.monotonic()
+            if remaining <= 0:
+                break
+            fetch_thread.join(min(0.2, remaining))
+            if self.monitor.abortRequested():
+                # Kodi is exiting; daemon thread cannot be safely cancelled.
+                raise RuntimeError("Kodi shutdown during POV request")
+        if fetch_thread.is_alive():
+            self.lingering_pov.append((fetch_thread, slot))
+            xbmc.log("FENtastic cache: POV widget %s exceeded %.1fs; "
+                     "defer this row and try the next (request may remain "
+                     "active; at most two can overlap)" %
+                     (slot, POV_SOFT_TIMEOUT), xbmc.LOGWARNING)
+            raise TimeoutError("POV request exceeded %.1fs soft timeout" %
+                               POV_SOFT_TIMEOUT)
+        if "error" in outcome:
+            raise outcome["error"]
+        return outcome["files"]
+
     def _load(self, slot, path, header):
         try:
             with connect() as db:
@@ -339,8 +399,11 @@ class WidgetCacheWorker:
                 return False
             if fail and now < fail[0]:
                 return False
-            # A single service thread executes this. The wrapper does not call this.
-            files = _request_directory(path)
+            # Normal rows are serial. One timed-out Kodi call may still be
+            # running when we attempt the next; hard-cap concurrent calls at 2.
+            if self._active_fetches() >= MAX_ACTIVE_POV_REQUESTS:
+                return False  # Defer; do not record a failure or destroy cache.
+            files = self._request_with_soft_timeout(slot, path)
             cleaned = _normalize(files)
             snapshot = json.dumps(cleaned, ensure_ascii=False, separators=(",", ":"))
             changed = not cached or cached[1] != snapshot
@@ -452,8 +515,8 @@ class WidgetCacheWorker:
                 self._load(entry["slot"], entry["path"], entry["header"])
                 if self._abort(0.05):
                     return
-            # This is outside the request loop: no concurrent upstream
-            # Files.GetDirectory call is active in this worker.
+            # Only reload when ALL active POV calls, including any late
+            # timed-out calls, have finished. _reload_ui enforces that guard.
             self._reload_ui()
             if self._abort(5):
                 return
