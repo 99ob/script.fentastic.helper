@@ -13,13 +13,12 @@ import xbmc
 import xbmcgui
 import xbmcplugin
 
-from modules.widget_cache import VIDEO_FIELDS, get_snapshot, get_source
+from modules.widget_cache import get_snapshot, get_source
 
 
 IMDB_ID = re.compile(r"^tt\d+$", re.IGNORECASE)
 MEDIA_TYPES = {"movie", "tvshow", "episode", "musicvideo", "season"}
-# Fields that must be assigned through InfoTagVideo rather than legacy setInfo.
-TAG_FIELDS = {"imdbnumber", "uniqueid", "resume", "userrating", "type", "mediatype"}
+# All supported video fields now use InfoTagVideo methods.
 
 
 def _id_string(value):
@@ -135,7 +134,8 @@ def _restore_info_tag(item, row):
                           ("plotoutline", "setPlotOutline"), ("mpaa", "setMpaa"),
                           ("premiered", "setPremiered"), ("firstaired", "setFirstAired"),
                           ("tagline", "setTagLine"), ("originaltitle", "setOriginalTitle"),
-                          ("tvshowtitle", "setTvShowTitle")):
+                          ("tvshowtitle", "setTvShowTitle"),
+                          ("dateadded", "setDateAdded"), ("trailer", "setTrailer")):
         value = row.get(field)
         if not value:
             continue
@@ -152,6 +152,11 @@ def _restore_info_tag(item, row):
         try:
             getattr(tag, method)([str(v) for v in values if v is not None and str(v)])
         except (TypeError, ValueError, AttributeError, RuntimeError):
+            pass
+    if row.get("votes") is not None:
+        try:
+            tag.setVotes(int(str(row["votes"]).replace(",", "")))
+        except (ValueError, TypeError, AttributeError, RuntimeError):
             pass
     if row.get("watchedepisodes") is not None:
         item.setProperty("WatchedEpisodes", str(row["watchedepisodes"]))
@@ -208,14 +213,8 @@ def serve():
                 art.setdefault("fanart", row["fanart"])
             if art:
                 item.setArt(art)
-            info = {key: row[key] for key in VIDEO_FIELDS if key not in TAG_FIELDS
-                    and key in row and row[key] is not None}
-            if info:
-                try:
-                    item.setInfo("video", info)
-                except Exception as exc:
-                    xbmc.log("FENtastic cache: item metadata degraded: %s" % exc,
-                             xbmc.LOGDEBUG)
+            # Kodi 22+: deprecated legacy video metadata calls removed.
+            # Tags are filled using typed InfoTagVideo setters below.
             _apply_video_tag(item, row)
             _restore_info_tag(item, row)
             item.setProperty("fentastic.cache_item", "true")

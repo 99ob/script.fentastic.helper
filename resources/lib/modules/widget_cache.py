@@ -246,7 +246,7 @@ class WidgetCacheWorker:
         self.home = xbmcgui.Window(10000)
         self.last_reload = 0.0
         self.modified = False
-        self.pending_reload = False
+        self.pending_widget_slots = set()
         self.last_cache_change = 0.0
         self.last_reload_request = self.home.getProperty(RELOAD_REQUEST_PROPERTY)
         self.last_prune = 0
@@ -257,7 +257,7 @@ class WidgetCacheWorker:
         return self.monitor.waitForAbort(delay)
 
     def _migrate(self):
-        """Regenerate existing XML containing broken fentastic.seq paths once."""
+        """Migrate legacy widgets and install per-row dynamic refresh URLs."""
         from modules.cpath_maker import CPaths
         changed = False
         for menu, kind, base in SECTIONS:
@@ -274,7 +274,8 @@ class WidgetCacheWorker:
                         old = fh.read()
                 except Exception:
                     old = ""
-                if "mode=widget_cache" in old:
+                if ("mode=widget_cache" in old and
+                        "fentastic.widget." in old):
                     continue
                 maker.refresh_cpaths = True
                 maker.make_widget_xml(configured, reload_skin=False)
@@ -290,48 +291,54 @@ class WidgetCacheWorker:
             request_skin_reload("widget XML migration")
 
     def _reload_ui(self):
-        """One coordinator for configuration edits and cached-data changes.
+        """Refresh changed rows by changing their dynamic content URLs.
 
-        Do not reload while any timed-out upstream JSON-RPC call is still active.
-        Reload normally after the completed cache pass when Kodi is safe.
+        Whole-skin reloads remain reserved for explicit menu/widget XML changes.
+        A one-second quiet period batches rows into a single revision update.
         """
-        if self._active_fetches():
-            return False
         token = self.home.getProperty(RELOAD_REQUEST_PROPERTY)
         configuration_pending = bool(token) and token != self.last_reload_request
-        if not configuration_pending and not self.pending_reload:
-            return False
-
         now_ns = time.monotonic_ns()
         now = now_ns / 1_000_000_000.0
+
         if configuration_pending:
+            # ReloadSkin is never sent while a POV JSON-RPC call is active.
+            if self._active_fetches():
+                return False
             try:
                 request_ns = int(token)
             except (ValueError, TypeError):
                 request_ns = now_ns
             if now_ns - request_ns < 1_000_000_000:
                 return False
-        if self.pending_reload and now - self.last_cache_change < 1.0:
-            return False
-        if now - self.last_reload < 1.0:
-            return False
-
-        current_window = xbmcgui.getCurrentWindowId()
-        # Keep the original dialog safety guard from cpath_maker.py.
-        if current_window == 10035:
-            return False
-        # Don't interrupt browsing/playback just for a background cache update.
-        # Explicit widget/menu edits still reload even outside Home.
-        if not configuration_pending and current_window != 10000:
-            return False
-
-        self.last_reload = now
-        self.pending_reload = False
-        if configuration_pending:
+            if now - self.last_reload < 1.0:
+                return False
+            if xbmcgui.getCurrentWindowId() == 10035:
+                return False
+            self.last_reload = now
             self.last_reload_request = token
-        xbmc.log("FENtastic reload: one coordinated skin reload after widget "
-                 "edit/cache refresh", xbmc.LOGINFO)
-        xbmc.executebuiltin("ReloadSkin()")
+            # A full reload recreates all widget containers from the current DB.
+            self.pending_widget_slots.clear()
+            xbmc.log("FENtastic reload: full skin reload for widget/menu XML edit",
+                     xbmc.LOGINFO)
+            xbmc.executebuiltin("ReloadSkin()")
+            return True
+
+        if not self.pending_widget_slots:
+            return False
+        if now - self.last_cache_change < 1.0:
+            return False
+        # Cached plugin content paths include the revision property. Kodi can
+        # refresh only affected widget containers, without recompiling the skin.
+        # Publishing while away from Home is safe; Kodi uses the new URL on entry.
+        revision = str(now_ns)
+        changed_slots = sorted(self.pending_widget_slots)
+        for slot in changed_slots:
+            self.home.setProperty("fentastic.widget.%s.revision" % slot, revision)
+        self.pending_widget_slots.clear()
+        xbmc.log("FENtastic cache: refreshed %d widget content URL(s), "
+                 "no full skin reload (slots: %s)" %
+                 (len(changed_slots), ",".join(changed_slots)), xbmc.LOGINFO)
         return True
 
     def _record_failed_refresh(self, slot, path, error):
@@ -378,6 +385,10 @@ class WidgetCacheWorker:
             db.execute("INSERT OR REPLACE INTO snapshots(source_hash,updated_at,payload) "
                        "VALUES(?,?,?)", (h, time.time(), snapshot))
             db.execute("DELETE FROM failures WHERE source_hash=?", (h,))
+            # One cached source can feed several widget containers.
+            linked_slots = [r[0] for r in db.execute(
+                "SELECT slot FROM sources WHERE source_hash=?", (h,)
+            ).fetchall()]
         available = {key: sum(1 for r in cleaned if r.get(key))
                      for key in ("year", "genre", "duration", "mpaa", "studio")}
         xbmc.log("FENtastic cache: updated widget %s (%d items; "
@@ -387,7 +398,7 @@ class WidgetCacheWorker:
                   available["studio"]), xbmc.LOGINFO)
         if changed:
             self.modified = True
-            self.pending_reload = True
+            self.pending_widget_slots.update(linked_slots or (slot,))
             self.last_cache_change = time.monotonic()
         return changed
 
@@ -593,8 +604,8 @@ class WidgetCacheWorker:
                 self._load(entry["slot"], entry["path"], entry["header"])
                 if self._abort(0.05):
                     return
-            # Only reload when ALL active POV calls, including any late
-            # timed-out calls, have finished. _reload_ui enforces that guard.
+            # Row revisions are published without a full skin reload.
+            # Full reload for XML edits still waits for all POV calls.
             self._reload_ui()
             if self._abort(5):
                 return

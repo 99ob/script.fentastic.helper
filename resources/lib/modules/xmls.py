@@ -11,7 +11,7 @@ media_xml_end = "\
 
 media_xml_body = '\
 \n        <include content="{cpath_type}">\
-\n            <param name="content_path" value="plugin://script.fentastic.helper/?mode=widget_cache&amp;slot={cpath_list_id}"/>\
+\n            <param name="content_path" value="plugin://script.fentastic.helper/?mode=widget_cache&amp;slot={cpath_list_id}&amp;rev=$INFO[Window(Home).Property(fentastic.widget.{cpath_list_id}.revision)]"/>\
 \n            <param name="widget_header" value="{cpath_header}"/>\
 \n            <param name="widget_target" value="videos"/>\
 \n            <param name="list_id" value="{cpath_list_id}"/>\
@@ -26,13 +26,13 @@ history_xml_body = "\
 
 stacked_media_xml_body = '\
 \n        <include content="WidgetListCategoryStacked">\
-\n            <param name="content_path" value="plugin://script.fentastic.helper/?mode=widget_cache&amp;slot={cpath_list_id}"/>\
+\n            <param name="content_path" value="plugin://script.fentastic.helper/?mode=widget_cache&amp;slot={cpath_list_id}&amp;rev=$INFO[Window(Home).Property(fentastic.widget.{cpath_list_id}.revision)]"/>\
 \n            <param name="widget_header" value="{cpath_header}"/>\
 \n            <param name="widget_target" value="videos"/>\
 \n            <param name="list_id" value="{cpath_list_id}"/>\
 \n        </include>\
 \n        <include content="{cpath_type}">\
-\n            <param name="content_path" value="plugin://script.fentastic.helper/?mode=widget_cache&amp;slot={cpath_list_id}.child"/>\
+\n            <param name="content_path" value="plugin://script.fentastic.helper/?mode=widget_cache&amp;slot={cpath_list_id}.child&amp;rev=$INFO[Window(Home).Property(fentastic.widget.{cpath_list_id}.child.revision)]"/>\
 \n            <param name="widget_header" value="$INFO[Window(Home).Property(fentastic.{cpath_list_id}.label)]"/>\
 \n            <param name="widget_target" value="videos"/>\
 \n            <param name="list_id" value="{cpath_list_id}1"/>\
