@@ -238,5 +238,10 @@ if __name__ == "__main__":
     if parse_qs(sys.argv[2].lstrip("?")).get("mode", [""])[0] == "search_history":
         from modules.search_history_plugin import serve_search_history
         serve_search_history()
+    elif parse_qs(sys.argv[2].lstrip("?")).get("mode", [""])[0] == "search_history_pick":
+        from modules.search_utils import SPaths
+        args = parse_qs(sys.argv[2].lstrip("?"))
+        SPaths().re_search_id(args.get("spath_id", [""])[0])
+        xbmcplugin.endOfDirectory(int(sys.argv[1]), succeeded=True, cacheToDisc=False)
     else:
         serve()
