@@ -7,7 +7,7 @@ while the next starts; at most two calls may overlap. Late successes within
 30 additional seconds update SQLite on the coordinator worker.
 """
 import hashlib
-from contextlib import contextmanager
+from contextlib import contextmanager, closing
 import json
 import sqlite3
 import time
@@ -121,6 +121,36 @@ def get_source(slot, source_override=None):
         xbmc.log("FENtastic cache: cannot read source for %s: %s" %
                  (slot, exc), xbmc.LOGWARNING)
         return ""
+
+
+def get_widget_listing(slot, source_override=None):
+    """Read one widget's snapshot and original source with ONE read connection.
+
+    The persistent worker initializes/migrates the schema. Plugin readers should
+    never run CREATE TABLE, write metadata or alter the database journal mode.
+    An uninitialized database (e.g. early in Kodi startup) simply yields empty.
+    """
+    try:
+        with closing(sqlite3.connect(DB, timeout=3)) as db:
+            if source_override:
+                row = db.execute(
+                    "SELECT payload FROM snapshots WHERE source_hash=?",
+                    (digest(source_override),)
+                ).fetchone()
+                return (json.loads(row[0]) if row else None), source_override
+            row = db.execute(
+                "SELECT s.source, p.payload FROM sources AS s "
+                "LEFT JOIN snapshots AS p ON p.source_hash=s.source_hash "
+                "WHERE s.slot=?", (slot,)
+            ).fetchone()
+        if not row:
+            return None, ""
+        source, payload = row
+        return (json.loads(payload) if payload is not None else None), source
+    except (sqlite3.Error, ValueError, TypeError) as exc:
+        xbmc.log("FENtastic cache: listing read failed for %s: %s" %
+                 (slot, exc), xbmc.LOGWARNING)
+        return None, (source_override or "")
 
 
 def ttl(path, label):

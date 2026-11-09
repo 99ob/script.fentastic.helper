@@ -35,7 +35,10 @@ class RatingsService(xbmc.Monitor):
         self.pending_keys = set()
         self.retry_after = {}
         self.latest_key = None
-        Thread(target=self._ratings_worker, name="FENtastic-MDbList", daemon=True).start()
+        self._ratings_thread = Thread(
+            target=self._ratings_worker, name="FENtastic-MDbList", daemon=True
+        )
+        self._ratings_thread.start()
 
     def onNotification(self, sender, method, data):
         if sender == "xbmc":
@@ -210,6 +213,25 @@ class RatingsService(xbmc.Monitor):
 
 logger("###FENtastic: Ratings Service Started", 1)
 ratings_service = RatingsService()
-Thread(target=WidgetCacheWorker(ratings_service).run, daemon=True).start()
-ratings_service.listitem_monitor()
-logger("###FENtastic: RatingsService Finished", 1)
+cache_worker = WidgetCacheWorker(ratings_service)
+cache_thread = Thread(target=cache_worker.run, name="FENtastic-WidgetCache", daemon=True)
+cache_thread.start()
+try:
+    ratings_service.listitem_monitor()
+finally:
+    # Kodi has signalled the shared Monitor to abort. Allow the
+    # worker loops to exit before releasing the SWIG Monitor.
+    cache_thread.join(timeout=2.0)
+    ratings_service._ratings_thread.join(timeout=2.0)
+    if cache_thread.is_alive() or ratings_service._ratings_thread.is_alive():
+        logger("FENtastic: shutdown: background worker still active "
+               "(Kodi calls cannot be force-cancelled)", xbmc.LOGWARNING)
+    else:
+        # Drop Python references to the monitor-backed workers
+        # before the Kodi interpreter unloads its SWIG wrappers.
+        del cache_worker
+        del cache_thread
+        del ratings_service
+        import gc
+        gc.collect()
+    logger("###FENtastic: RatingsService Finished", 1)

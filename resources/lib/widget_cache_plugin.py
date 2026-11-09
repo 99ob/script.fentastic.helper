@@ -13,7 +13,7 @@ import xbmc
 import xbmcgui
 import xbmcplugin
 
-from modules.widget_cache import get_snapshot, get_source
+from modules.widget_cache import get_widget_listing
 
 
 IMDB_ID = re.compile(r"^tt\d+$", re.IGNORECASE)
@@ -187,11 +187,10 @@ def serve():
     if slot.endswith(".child"):
         parent = slot[:-6]
         source_override = xbmcgui.Window(10000).getProperty("fentastic.%s.path" % parent)
-    rows = get_snapshot(slot, source_override=source_override)
+    rows, source = get_widget_listing(slot, source_override=source_override)
     if rows is None:
         xbmcplugin.endOfDirectory(handle, succeeded=True, cacheToDisc=False)
         return
-    source = get_source(slot, source_override)
     open_source_action = _browse_original_action(source)
     imdb_items = sum(1 for row in rows if "imdb" in _identifiers(row))
     xbmc.log("FENtastic cache: widget %s has IMDb IDs for %s/%s cached items" %
