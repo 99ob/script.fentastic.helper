@@ -72,8 +72,6 @@ def widget_monitor(list_id):
             stack_label_control.setLabel(cpath_label)
             window.setProperty("fentastic.%s.label" % list_id, cpath_label)
             window.setProperty("fentastic.%s.path" % list_id, cpath_path)
-            if window_id == 10000:
-                window.setProperty("fentastic.seq.%s1.pending" % list_id, cpath_path)
             monitor.waitForAbort(0.2)
             update_wait_time = 0
             while (

@@ -724,56 +724,8 @@ def remake_all_cpaths(silent=False):
 
 
 def starting_widgets():
-    window = xbmcgui.Window(10000)
-    window.setProperty("fentastic.starting_widgets", "finished")
-    for item in (
-        "movie.widget",
-        "tvshow.widget",
-        "custom1.widget",
-        "custom2.widget",
-        "custom3.widget",
-    ):
-        try:
-            active_cpaths = CPaths(item).fetch_current_cpaths()
-            if not active_cpaths:
-                continue
-            widget_type = item.split(".")[0]
-            widget_type_id = {
-                "movie": 19010,
-                "tvshow": 22010,
-                "custom1": 23010,
-                "custom2": 24010,
-                "custom3": 25010,
-            }
-            base_list_id = widget_type_id.get(widget_type)
-            for count in range(1, 11):
-                active_widget = active_cpaths.get(count, {})
-                if not active_widget:
-                    continue
-                if not "Stacked" in active_widget["cpath_label"]:
-                    continue
-                cpath_setting = active_widget["cpath_setting"]
-                if not cpath_setting:
-                    continue
-                try:
-                    list_id = base_list_id + int(cpath_setting.split(".")[2])
-                except:
-                    continue
-                try:
-                    first_item = files_get_directory(active_widget["cpath_path"])[0]
-                except:
-                    continue
-                if not first_item:
-                    continue
-                cpath_label, cpath_path = first_item["label"], first_item["file"]
-                window.setProperty("fentastic.%s.label" % list_id, cpath_label)
-                window.setProperty("fentastic.%s.path" % list_id, cpath_path)
-        except:
-            pass
-    try:
-        del window
-    except:
-        pass
+    # Do not bypass the cache by fetching stacked categories on Home load.
+    xbmcgui.Window(10000).setProperty("fentastic.starting_widgets", "finished")
 
 
 def show_busy_dialog():
