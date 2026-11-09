@@ -177,6 +177,14 @@ def _browse_original_action(source):
 
 
 def serve():
+    # FENTASTIC_EMPTY_PROVIDER_LISTING_20261109
+    if len(sys.argv) > 2 and 'fentastic_empty=1' in sys.argv[2].lstrip('?').split('&'):
+        xbmcplugin.endOfDirectory(int(sys.argv[1]), succeeded=True, cacheToDisc=False)
+        return
+    # FENTASTIC_EMPTY_DIRECTORY_V3
+    if len(sys.argv) > 2 and "fentastic_empty=1" in sys.argv[2].lstrip("?").split("&"):
+        xbmcplugin.endOfDirectory(int(sys.argv[1]), succeeded=True, cacheToDisc=False)
+        return
     handle = int(sys.argv[1])
     args = parse_qs(sys.argv[2].lstrip("?"))
     slot = args.get("slot", [""])[0]
@@ -235,6 +243,10 @@ def serve():
 
 
 if __name__ == "__main__":
+    # FENtastic empty-result listing: no provider search for blank query
+    if len(sys.argv) > 2 and parse_qs(sys.argv[2].lstrip("?")).get("mode", [""])[0] == "fentastic_empty_results":
+        xbmcplugin.endOfDirectory(int(sys.argv[1]), succeeded=True, cacheToDisc=False)
+        sys.exit(0)
     if parse_qs(sys.argv[2].lstrip("?")).get("mode", [""])[0] == "search_history":
         from modules.search_history_plugin import serve_search_history
         serve_search_history()

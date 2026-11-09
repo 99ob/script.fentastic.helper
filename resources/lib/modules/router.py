@@ -6,7 +6,11 @@ from urllib.parse import parse_qsl
 
 
 def routing():
-    params = dict(parse_qsl(sys.argv[1], keep_blank_values=True))
+    # RunScript() supplies comma-separated parameters as separate argv entries.
+    # Parse all key=value arguments, while also accepting ?mode=...&key=...
+    # from callers that use a single query-string argument.
+    args = [arg.lstrip("?") for arg in sys.argv[1:] if "=" in arg]
+    params = dict(parse_qsl("&".join(args), keep_blank_values=True))
     _get = params.get
     mode = _get("mode", "check_for_update")
     if mode == "widget_monitor":

@@ -82,6 +82,7 @@ class SPaths:
         self.dbcur.execute("DELETE FROM spath")
         self.dbcur.execute("DELETE FROM sqlite_sequence WHERE name='spath'")
         self.dbcon.commit()
+        xbmcgui.Window(_HOME).setProperty("fentastic.search.query_ready", "0")
         xbmc.executebuiltin("Skin.Reset(SearchInput)")
         xbmc.executebuiltin("Skin.Reset(SearchInputEncoded)")
         xbmc.executebuiltin("Skin.SetString(SearchInputTraktEncoded,none)")
@@ -101,9 +102,7 @@ class SPaths:
         return row[0] if row else None
 
     def _ensure_provider(self):
-        order = (("3", "plugin.video.pov"), ("0", "plugin.video.fen"),
-                 ("1", "plugin.video.fenlight"), ("2", "plugin.video.umbrella"),
-                 ("4", "plugin.video.seren"))
+        order = (("2", "plugin.video.umbrella"), ("3", "plugin.video.pov"))
         current = xbmc.getInfoLabel("Skin.String(current_search_provider)")
         if any(pid == current and xbmc.getCondVisibility(
                 "System.AddonIsEnabled(%s)" % addon) for pid, addon in order):
@@ -115,9 +114,7 @@ class SPaths:
         xbmc.log("FENtastic search: no enabled search provider", xbmc.LOGWARNING)
 
     def toggle_search_provider(self):
-        order = (("0", "plugin.video.fen"), ("1", "plugin.video.fenlight"),
-                 ("2", "plugin.video.umbrella"), ("3", "plugin.video.pov"),
-                 ("4", "plugin.video.seren"))
+        order = (("2", "plugin.video.umbrella"), ("3", "plugin.video.pov"))
         active = xbmc.getInfoLabel("Skin.String(current_search_provider)")
         ids = [pid for pid, _ in order]
         start = ids.index(active) if active in ids else -1
@@ -129,6 +126,7 @@ class SPaths:
                 xbmc.executebuiltin("Skin.SetString(current_search_provider,%s)" % pid)
                 self._clear_trakt_children()
                 self._refresh(results=True)
+                xbmc.executebuiltin("ReloadSkin()")
             return
         xbmcgui.Dialog().notification("FENtastic", "No enabled search providers")
 
@@ -149,6 +147,8 @@ class SPaths:
         else:
             xbmc.executebuiltin("Skin.Reset(DatabaseStatus)")
         xbmc.executebuiltin("Skin.Reset(SearchInput)")
+        # FENTASTIC_QUERY_READY_GUARD_V3
+        xbmcgui.Window(_HOME).setProperty("fentastic.search.query_ready", "0")
         xbmc.executebuiltin("Skin.Reset(SearchInputEncoded)")
         xbmc.executebuiltin("Skin.SetString(SearchInputTraktEncoded,none)")
         self._clear_trakt_children()
@@ -180,6 +180,7 @@ class SPaths:
         xbmc.executebuiltin("Skin.SetString(SearchInputEncoded,%s)" % encoded)
         xbmc.executebuiltin("Skin.SetString(SearchInputTraktEncoded,%s)" % encoded)
         xbmc.executebuiltin("Skin.SetString(SearchInput,%s)" % search_term)
+        xbmcgui.Window(_HOME).setProperty("fentastic.search.query_ready", "1")
         self._clear_trakt_children()
         self._refresh(results=True, history=True)
         if xbmcgui.getCurrentWindowId() == _HOME:
@@ -187,6 +188,7 @@ class SPaths:
             xbmc.sleep(200)
             self._clear_trakt_children()
         xbmc.executebuiltin("SetFocus(2000)")
+        # FENtastic experimental search refresh: no full ReloadSkin on query
 
     def re_search(self):
         self.search_input(xbmc.getInfoLabel("ListItem.Label"))
