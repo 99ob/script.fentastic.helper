@@ -299,11 +299,11 @@ class WidgetCacheWorker:
                 request_ns = int(token)
             except (ValueError, TypeError):
                 request_ns = now_ns
-            if now_ns - request_ns < 3_000_000_000:
+            if now_ns - request_ns < 1_000_000_000:
                 return False
-        if self.pending_reload and now - self.last_cache_change < 3.0:
+        if self.pending_reload and now - self.last_cache_change < 1.0:
             return False
-        if now - self.last_reload < 4.0:
+        if now - self.last_reload < 1.0:
             return False
 
         current_window = xbmcgui.getCurrentWindowId()
