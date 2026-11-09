@@ -1,10 +1,12 @@
-import xbmc, xbmcgui
-from threading import Thread
-from queue import Queue, Empty, Full
+"""FENtastic ratings service and coordinated skin reload worker."""
+import json
 import time
+from queue import Queue, Empty, Full
+from threading import Thread
+
+import xbmc, xbmcgui
 from modules.MDbList import MDbListAPI
 from modules.skin_reload import SkinReloadWorker
-import json
 
 logger = xbmc.log
 empty_ratings = {
@@ -49,10 +51,13 @@ class RatingsService(xbmc.Monitor):
                 self.window(self.get_window_id()).clearProperty("pause_services")
                 logger("###FENtastic: Device is Awake, RESUMING Ratings Service", 1)
 
+    def _imdb_label(self, prefix):
+        return (self.get_infolabel(prefix + "IMDBNumber") or
+                self.get_infolabel(prefix + "Property(imdb_id)"))
+
     def _selected_imdb_id(self):
         """Identify the selected item, including focused home widget rows."""
-        primary = (self.get_infolabel("ListItem.IMDBNumber") or
-                   self.get_infolabel("ListItem.Property(imdb_id)"))
+        primary = self._imdb_label("ListItem.")
         if self.get_window_id() != 10000:
             return primary
         try:
@@ -61,9 +66,7 @@ class RatingsService(xbmc.Monitor):
             return primary
         if any(base < control_id <= base + 10 for base in
                (19010, 22010, 23010, 24010, 25010)):
-            prefix = "Container(%s).ListItem." % control_id
-            item_id = (self.get_infolabel(prefix + "IMDBNumber") or
-                       self.get_infolabel(prefix + "Property(imdb_id)"))
+            item_id = self._imdb_label("Container(%s).ListItem." % control_id)
             if item_id.startswith("tt"):
                 return item_id
         return primary
@@ -125,9 +128,7 @@ class RatingsService(xbmc.Monitor):
         if (self.last_set_imdb_id == imdb_id and
                 self.last_set_window_id == window_id):
             return
-        target = self.window(window_id)
-        for property_name in empty_ratings:
-            target.setProperty("fentastic.%s" % property_name, "")
+        self._apply_ratings(self.window(window_id), empty_ratings)
         self.last_set_imdb_id = imdb_id
         self.last_set_window_id = window_id
         self.last_applied_key = None
@@ -196,17 +197,16 @@ class RatingsService(xbmc.Monitor):
                 continue
             target = self.window(window_id)
             cached = target.getProperty("fentastic.cachedRatings.%s" % selected_id)
-            if cached:
-                try:
-                    ratings = json.loads(cached)
-                    if isinstance(ratings, dict):
-                        if self.last_applied_key != (window_id, selected_id):
-                            self._apply_ratings(target, ratings)
-                            self.last_applied_key = (window_id, selected_id)
-                        self.waitForAbort(0.2)
-                        continue
-                except ValueError:
-                    pass
+            try:
+                ratings = json.loads(cached) if cached else None
+            except ValueError:
+                ratings = None
+            if isinstance(ratings, dict):
+                if self.last_applied_key != (window_id, selected_id):
+                    self._apply_ratings(target, ratings)
+                    self.last_applied_key = (window_id, selected_id)
+                self.waitForAbort(0.2)
+                continue
             self._queue_ratings(selected_id, api_key)
             self.waitForAbort(0.2)
 
