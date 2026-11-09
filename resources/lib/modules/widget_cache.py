@@ -303,7 +303,7 @@ class WidgetCacheWorker:
                 return False
         if self.pending_reload and now - self.last_cache_change < 3.0:
             return False
-        if now - self.last_reload < 8.0:
+        if now - self.last_reload < 4.0:
             return False
 
         current_window = xbmcgui.getCurrentWindowId()
