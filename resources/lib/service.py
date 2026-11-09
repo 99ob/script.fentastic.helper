@@ -1,6 +1,7 @@
 import xbmc, xbmcgui
 from threading import Thread
 from modules.MDbList import MDbListAPI
+from modules.sequential_widgets import SequentialWidgets
 import json
 
 logger = xbmc.log
@@ -98,5 +99,7 @@ class RatingsService(xbmc.Monitor):
 
 
 logger("###FENtastic: Ratings Service Started", 1)
-RatingsService().listitem_monitor()
+ratings_service = RatingsService()
+Thread(target=SequentialWidgets(ratings_service).run, daemon=True).start()
+ratings_service.listitem_monitor()
 logger("###FENtastic: RatingsService Finished", 1)

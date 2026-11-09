@@ -273,7 +273,7 @@ class CPaths:
         self.write_xml(xml_file, final_format)
         self.update_skin_strings()
 
-    def make_widget_xml(self, active_cpaths):
+    def make_widget_xml(self, active_cpaths, reload_skin=True):
         if not self.refresh_cpaths:
             return
         if not active_cpaths:
@@ -315,15 +315,17 @@ class CPaths:
                 cpath_header=cpath_header,
                 cpath_list_id=cpath_list_id,
             )
-            if not "&amp;" in body:
-                final_format += body.replace("&", "&amp;")
+            if "&amp;" not in body:
+                body = body.replace("&", "&amp;")
+            final_format += body
         final_format += xmls.media_xml_end
-        self.write_xml(xml_file, final_format)
+        self.write_xml(xml_file, final_format, reload_skin=reload_skin)
 
-    def write_xml(self, xml_file, final_format):
+    def write_xml(self, xml_file, final_format, reload_skin=True):
         with xbmcvfs.File(xml_file, "w") as f:
             f.write(final_format)
-        Thread(target=self.reload_skin).start()
+        if reload_skin:
+            Thread(target=self.reload_skin).start()
 
     def handle_path_browser_results(self, cpath_setting, context):
         result = self.path_browser()
@@ -646,7 +648,6 @@ class CPaths:
         window.setProperty("fentastic.clear_path_refresh", "")
         xbmc.sleep(200)
         xbmc.executebuiltin("ReloadSkin()")
-        starting_widgets()
 
     def clean_header(self, header):
         return header.replace("[B]", "").replace("[/B]", "").replace(" >>", "")
