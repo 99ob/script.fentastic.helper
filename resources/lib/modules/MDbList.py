@@ -19,12 +19,12 @@ IMAGE_PATH = "special://home/addons/skin.fentastic/resources/rating_images/"
 
 def make_session(url="https://"):
     session = requests.Session()
-    session.mount(url, requests.adapters.HTTPAdapter(pool_maxsize=100))
+    session.mount(url, requests.adapters.HTTPAdapter(pool_connections=4, pool_maxsize=4))
     return session
 
 
 api_url = "https://mdblist.com/api/?apikey=%s&i=%s"
-session = make_session("https://www.mdblist.com/")
+session = make_session("https://mdblist.com/")
 
 
 class MDbListAPI:
@@ -96,15 +96,32 @@ class MDbListAPI:
         if cached_info:
             return cached_info
         data = self.get_result(imdb_id, api_key)
-        self.insert_or_update_ratings(imdb_id, data)
+        # A transient network failure must not replace valid cached ratings.
+        if data:
+            self.insert_or_update_ratings(imdb_id, data)
         return data
 
     def get_result(self, imdb_id, api_key):
         url = api_url % (api_key, imdb_id)
-        response = requests.get(url)
-        if response.status_code != 200:
+        try:
+            # One dedicated ratings worker owns the persistent HTTPS session.
+            response = session.get(url, timeout=(3.05, 8.0))
+        except requests.RequestException as exc:
+            # Exceptions may include the API-key URL; log type, never its text.
+            xbmc.log("FENtastic ratings: MDbList HTTP failure (%s)" %
+                     type(exc).__name__, xbmc.LOGWARNING)
             return {}
-        json_data = response.json()
+        if response.status_code != 200:
+            xbmc.log("FENtastic ratings: MDbList HTTP %s" %
+                     response.status_code, xbmc.LOGWARNING)
+            return {}
+        try:
+            json_data = response.json()
+        except ValueError:
+            xbmc.log("FENtastic ratings: invalid MDbList JSON", xbmc.LOGWARNING)
+            return {}
+        if not isinstance(json_data, dict):
+            return {}
         ratings = json_data.get("ratings", [])
         data = {}
         for rating in ratings:

@@ -1,30 +1,41 @@
 import xbmc, xbmcgui
 from threading import Thread
+from queue import Queue, Empty, Full
+import time
 from modules.MDbList import MDbListAPI
 from modules.widget_cache import WidgetCacheWorker
 import json
 
 logger = xbmc.log
 empty_ratings = {
-    "metascore": "",
-    "tomatoMeter": "",
-    "tomatoUserMeter": "",
-    "tomatoImage": "",
-    "imdbRating": "",
-    "popularRating": "",
-    "tmdbRating": "",
+    "metascore": "", "metascoreImage": "", "tomatoMeter": "",
+    "tomatoImage": "", "tomatoUserMeter": "", "tomatoUserImage": "",
+    "imdbRating": "", "imdbImage": "", "popularRating": "",
+    "popularImage": "", "tmdbRating": "", "tmdbImage": "",
+    "trailer": "",
 }
 
 
 class RatingsService(xbmc.Monitor):
+    """One MDbList network worker, latest-selection queue, GUI writes on monitor."""
     def __init__(self):
         xbmc.Monitor.__init__(self)
         self.mdblist_api = MDbListAPI
         self.last_set_imdb_id = None
+        self.last_set_window_id = None
+        self.last_applied_key = None
         self.window = xbmcgui.Window
         self.get_window_id = xbmcgui.getCurrentWindowId
         self.get_infolabel = xbmc.getInfoLabel
         self.get_visibility = xbmc.getCondVisibility
+        # At most one outstanding HTTP call; one replacement job may be queued.
+        # Worker threads never set Kodi window properties.
+        self.jobs = Queue(maxsize=1)
+        self.results = Queue()
+        self.pending_keys = set()
+        self.retry_after = {}
+        self.latest_key = None
+        Thread(target=self._ratings_worker, name="FENtastic-MDbList", daemon=True).start()
 
     def onNotification(self, sender, method, data):
         if sender == "xbmc":
@@ -36,12 +47,7 @@ class RatingsService(xbmc.Monitor):
                 logger("###FENtastic: Device is Awake, RESUMING Ratings Service", 1)
 
     def _selected_imdb_id(self):
-        """Return the selected Kodi item's IMDb ID, including home widget rows.
-
-        With a cache-backed plugin, the global ListItem can refer to another
-        control. System.CurrentControlId identifies the focused widget row.
-        This does not make another POV or MDbList request.
-        """
+        """Identify the selected item, including focused home widget rows."""
         primary = (self.get_infolabel("ListItem.IMDBNumber") or
                    self.get_infolabel("ListItem.Property(imdb_id)"))
         if self.get_window_id() != 10000:
@@ -50,8 +56,8 @@ class RatingsService(xbmc.Monitor):
             control_id = int(self.get_infolabel("System.CurrentControlId"))
         except (TypeError, ValueError):
             return primary
-        if any(base < control_id <= base + 10 for base in (19010, 22010, 23010, 24010, 25010)):
-            # The selection inside a widget must win over any stale global ListItem.
+        if any(base < control_id <= base + 10 for base in
+               (19010, 22010, 23010, 24010, 25010)):
             prefix = "Container(%s).ListItem." % control_id
             item_id = (self.get_infolabel(prefix + "IMDBNumber") or
                        self.get_infolabel(prefix + "Property(imdb_id)"))
@@ -59,19 +65,110 @@ class RatingsService(xbmc.Monitor):
                 return item_id
         return primary
 
+    def _ratings_worker(self):
+        """Reuse one HTTP session without unbounded ratings threads."""
+        while not self.abortRequested():
+            try:
+                key = self.jobs.get(timeout=0.25)
+            except Empty:
+                continue
+            # A queued title might no longer be selected. Skip needless API work.
+            if key != self.latest_key:
+                self.results.put((key, None, True))
+                continue
+            imdb_id, api_key = key
+            api = None
+            try:
+                api = self.mdblist_api()
+                ratings = api.fetch_info({"imdb_id": imdb_id}, api_key)
+                self.results.put((key, ratings if isinstance(ratings, dict) else {}, False))
+            except Exception as exc:
+                # Never log an exception that might contain the API key in a URL.
+                logger("FENtastic ratings: fetch failed (%s)" %
+                       type(exc).__name__, xbmc.LOGWARNING)
+                self.results.put((key, {}, False))
+            finally:
+                if api is not None:
+                    try:
+                        api.dbcon.close()
+                    except Exception:
+                        pass
+
+    def _queue_ratings(self, imdb_id, api_key):
+        key = (imdb_id, api_key)
+        if key in self.pending_keys or time.monotonic() < self.retry_after.get(key, 0):
+            return
+        try:
+            self.jobs.put_nowait(key)
+        except Full:
+            try:
+                displaced = self.jobs.get_nowait()
+                self.pending_keys.discard(displaced)
+            except Empty:
+                pass
+            try:
+                self.jobs.put_nowait(key)
+            except Full:
+                # Another thread picked up work; defer until the next poll.
+                return
+        self.pending_keys.add(key)
+
+    def _apply_ratings(self, target, ratings):
+        for property_name, value in ratings.items():
+            if property_name in empty_ratings:
+                target.setProperty("fentastic.%s" % property_name, str(value))
+
+    def _clear_when_selection_changes(self, window_id, imdb_id):
+        if (self.last_set_imdb_id == imdb_id and
+                self.last_set_window_id == window_id):
+            return
+        target = self.window(window_id)
+        for property_name in empty_ratings:
+            target.setProperty("fentastic.%s" % property_name, "")
+        self.last_set_imdb_id = imdb_id
+        self.last_set_window_id = window_id
+        self.last_applied_key = None
+
+    def _consume_results(self, selected_id, api_key, window_id):
+        while True:
+            try:
+                key, ratings, skipped = self.results.get_nowait()
+            except Empty:
+                return
+            self.pending_keys.discard(key)
+            if skipped:
+                continue
+            if not ratings:
+                # Do not retry a failing API every 200ms; database snapshots stay.
+                self.retry_after[key] = time.monotonic() + 60.0
+                continue
+            self.retry_after.pop(key, None)
+            # The only Kodi window updates are made on the monitor thread.
+            if (key != (selected_id, api_key) or
+                    self.get_window_id() != window_id or
+                    self._selected_imdb_id() != selected_id):
+                continue
+            target = self.window(window_id)
+            target.setProperty("fentastic.cachedRatings.%s" % selected_id,
+                               json.dumps(ratings))
+            self._apply_ratings(target, ratings)
+            self.last_applied_key = (window_id, selected_id)
+
     def listitem_monitor(self):
         while not self.abortRequested():
-            if (
-                self.window(self.get_window_id()).getProperty("pause_services")
-                == "true"
-            ):
+            window_id = self.get_window_id()
+            selected_id = self._selected_imdb_id()
+            api_key = self.get_infolabel("Skin.String(mdblist_api_key)")
+            self.latest_key = (selected_id, api_key)
+            self._consume_results(selected_id, api_key, window_id)
+            if self.window(window_id).getProperty("pause_services") == "true":
                 self.waitForAbort(2)
                 continue
             if xbmc.getSkinDir() != "skin.fentastic":
                 self.waitForAbort(15)
                 continue
-            api_key = self.get_infolabel("Skin.String(mdblist_api_key)")
             if not api_key:
+                self._clear_when_selection_changes(window_id, "")
                 self.waitForAbort(10)
                 continue
             if not self.get_visibility(
@@ -90,36 +187,25 @@ class RatingsService(xbmc.Monitor):
                 xbmc.executebuiltin("Skin.ToggleSetting(TrailerPlaying)")
                 self.waitForAbort(0.2)
                 continue
-            imdb_id = self._selected_imdb_id()
-            set_property = self.window(self.get_window_id()).setProperty
-            get_property = self.window(self.get_window_id()).getProperty
-            cached_ratings = get_property(f"fentastic.cachedRatings.{imdb_id}")
-            if not imdb_id or not imdb_id.startswith("tt"):
-                for k, v in empty_ratings.items():
-                    set_property("fentastic.%s" % k, v)
-                self.last_set_imdb_id = None
+            self._clear_when_selection_changes(window_id, selected_id)
+            if not selected_id or not selected_id.startswith("tt"):
                 self.waitForAbort(0.2)
                 continue
-            if imdb_id == self.last_set_imdb_id:
-                self.waitForAbort(0.2)
-                continue
-            if cached_ratings:
-                result = json.loads(cached_ratings)
-                for k, v in result.items():
-                    set_property("fentastic.%s" % k, v)
-                self.last_set_imdb_id = imdb_id
-                self.waitForAbort(0.2)
-                continue
-            Thread(target=self.set_ratings, args=(api_key, imdb_id)).start()
+            target = self.window(window_id)
+            cached = target.getProperty("fentastic.cachedRatings.%s" % selected_id)
+            if cached:
+                try:
+                    ratings = json.loads(cached)
+                    if isinstance(ratings, dict):
+                        if self.last_applied_key != (window_id, selected_id):
+                            self._apply_ratings(target, ratings)
+                            self.last_applied_key = (window_id, selected_id)
+                        self.waitForAbort(0.2)
+                        continue
+                except ValueError:
+                    pass
+            self._queue_ratings(selected_id, api_key)
             self.waitForAbort(0.2)
-
-    def set_ratings(self, api_key, imdb_id):
-        set_property = self.window(self.get_window_id()).setProperty
-        result = self.mdblist_api().fetch_info({"imdb_id": imdb_id}, api_key)
-        if result:
-            set_property(f"fentastic.cachedRatings.{imdb_id}", json.dumps(result))
-            for k, v in result.items():
-                set_property("fentastic.%s" % k, v)
 
 
 logger("###FENtastic: Ratings Service Started", 1)

@@ -93,28 +93,36 @@ class SPaths:
 
     def make_search_history_xml(self, active_spaths):
         if not self.refresh_spaths:
-            return
+            return False
         if not active_spaths:
-            self.make_default_xml()
+            changed = self.make_default_xml()
         else:
             xml_file = "special://skin/xml/%s.xml" % search_history_xml
             final_format = xmls.media_xml_start.format(main_include="SearchHistory")
             for _, spath in active_spaths:
                 final_format += xmls.history_xml_body.format(spath=escape(spath))
             final_format += xmls.media_xml_end
-            self.write_xml(xml_file, final_format)
+            changed = self.write_xml(xml_file, final_format)
         self.refresh_spaths = False
+        return changed
 
     def write_xml(self, xml_file, final_format):
+        if xbmcvfs.exists(xml_file):
+            try:
+                with xbmcvfs.File(xml_file, "r") as f:
+                    if f.read() == final_format:
+                        return False
+            except (OSError, IOError):
+                pass
         with xbmcvfs.File(xml_file, "w") as f:
             f.write(final_format)
+        return True
 
     def make_default_xml(self):
         item = default_xmls["search_history"]
         final_format = item[1].format(includes_type=item[2])
         xml_file = "special://skin/xml/%s.xml" % item[0]
-        with xbmcvfs.File(xml_file, "w") as f:
-            f.write(final_format)
+        return self.write_xml(xml_file, final_format)
 
     def check_spath_exists(self, spath):
         result = self.dbcur.execute(
@@ -124,18 +132,20 @@ class SPaths:
 
     def open_search_window(self):
         if self.is_database_empty():
+            changed = self.make_default_xml()
             xbmc.executebuiltin("Skin.SetString(DatabaseStatus,Empty)")
             focus_id = 27400
         else:
-            self.remake_search_history()
+            changed = self.remake_search_history()
             xbmc.executebuiltin("Skin.Reset(DatabaseStatus)")
             focus_id = 803
         xbmc.executebuiltin("Skin.Reset(SearchInput)")
         xbmc.executebuiltin("Skin.Reset(SearchInputEncoded)")
         xbmc.executebuiltin("Skin.SetString(SearchInputTraktEncoded,none)")
-        # Refresh compiled search-history includes before entering search.
-        xbmc.executebuiltin("ReloadSkin()")
-        xbmc.sleep(350)
+        # Only recompile when the generated search-history XML changed.
+        if changed:
+            xbmc.executebuiltin("ReloadSkin()")
+            xbmc.sleep(350)
         if xbmcgui.getCurrentWindowId() == 10000:
             xbmc.executebuiltin("ActivateWindow(1121)")
             xbmc.sleep(200)
@@ -184,9 +194,8 @@ class SPaths:
         self.refresh_spaths = True
         active_spaths = self.fetch_all_spaths()
         if active_spaths:
-            self.make_search_history_xml(active_spaths)
-        else:
-            self.make_default_xml()
+            return self.make_search_history_xml(active_spaths)
+        return self.make_default_xml()
 
 
 # def remake_all_spaths(silent=False):

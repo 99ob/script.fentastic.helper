@@ -322,10 +322,18 @@ class CPaths:
         self.write_xml(xml_file, final_format, reload_skin=reload_skin)
 
     def write_xml(self, xml_file, final_format, reload_skin=True):
+        if xbmcvfs.exists(xml_file):
+            try:
+                with xbmcvfs.File(xml_file, "r") as f:
+                    if f.read() == final_format:
+                        return False
+            except (OSError, IOError):
+                pass
         with xbmcvfs.File(xml_file, "w") as f:
             f.write(final_format)
         if reload_skin:
             self.reload_skin()
+        return True
 
     def handle_path_browser_results(self, cpath_setting, context):
         result = self.path_browser()
@@ -667,10 +675,10 @@ class CPaths:
         item = default_xmls[self.cpath_setting]
         final_format = item[1].format(includes_type=item[2])
         xml_file = "special://skin/xml/%s.xml" % item[0]
-        with xbmcvfs.File(xml_file, "w") as f:
-            f.write(final_format)
+        changed = self.write_xml(xml_file, final_format, reload_skin=False)
         self.update_skin_strings()
-        self.reload_skin()
+        if changed:
+            self.reload_skin()
 
 
 def files_get_directory(directory, properties=["title", "file", "thumbnail"]):
