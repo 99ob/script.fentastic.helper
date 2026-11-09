@@ -35,6 +35,30 @@ class RatingsService(xbmc.Monitor):
                 self.window(self.get_window_id()).clearProperty("pause_services")
                 logger("###FENtastic: Device is Awake, RESUMING Ratings Service", 1)
 
+    def _selected_imdb_id(self):
+        """Return the selected Kodi item's IMDb ID, including home widget rows.
+
+        With a cache-backed plugin, the global ListItem can refer to another
+        control. System.CurrentControlId identifies the focused widget row.
+        This does not make another POV or MDbList request.
+        """
+        primary = (self.get_infolabel("ListItem.IMDBNumber") or
+                   self.get_infolabel("ListItem.Property(imdb_id)"))
+        if self.get_window_id() != 10000:
+            return primary
+        try:
+            control_id = int(self.get_infolabel("System.CurrentControlId"))
+        except (TypeError, ValueError):
+            return primary
+        if any(base < control_id <= base + 10 for base in (19010, 22010, 23010, 24010, 25010)):
+            # The selection inside a widget must win over any stale global ListItem.
+            prefix = "Container(%s).ListItem." % control_id
+            item_id = (self.get_infolabel(prefix + "IMDBNumber") or
+                       self.get_infolabel(prefix + "Property(imdb_id)"))
+            if item_id.startswith("tt"):
+                return item_id
+        return primary
+
     def listitem_monitor(self):
         while not self.abortRequested():
             if (
@@ -66,8 +90,7 @@ class RatingsService(xbmc.Monitor):
                 xbmc.executebuiltin("Skin.ToggleSetting(TrailerPlaying)")
                 self.waitForAbort(0.2)
                 continue
-            imdb_id = (self.get_infolabel("ListItem.IMDBNumber") or
-                       self.get_infolabel("ListItem.Property(imdb_id)"))
+            imdb_id = self._selected_imdb_id()
             set_property = self.window(self.get_window_id()).setProperty
             get_property = self.window(self.get_window_id()).getProperty
             cached_ratings = get_property(f"fentastic.cachedRatings.{imdb_id}")

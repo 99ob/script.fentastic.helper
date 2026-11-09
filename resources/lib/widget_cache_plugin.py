@@ -175,6 +175,10 @@ def serve():
                     xbmc.log("FENtastic cache: item metadata degraded: %s" % exc,
                              xbmc.LOGDEBUG)
             _apply_video_tag(item, row)
+            # The skin can identify cached media even if JSON-RPC omits
+            # Genre or DBType. Original ratings layout remains unchanged.
+            if "imdb" in _identifiers(row):
+                item.setProperty("fentastic.cache_item", "true")
             if open_source_action:
                 item.addContextMenuItems([open_source_action])
             if not folder:
