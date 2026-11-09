@@ -4,7 +4,8 @@ import xbmc, xbmcgui, xbmcvfs
 import sqlite3 as database
 from modules import xmls
 from urllib.parse import quote
-from threading import Thread, Event
+from threading import Thread
+from xml.sax.saxutils import escape
 
 # from modules.logger import logger
 
@@ -90,22 +91,19 @@ class SPaths:
         xbmc.sleep(200)
         xbmc.executebuiltin("SetFocus(27400)")
 
-    def make_search_history_xml(self, active_spaths, event=None):
+    def make_search_history_xml(self, active_spaths):
         if not self.refresh_spaths:
             return
         if not active_spaths:
             self.make_default_xml()
-        xml_file = "special://skin/xml/%s.xml" % (search_history_xml)
-        final_format = xmls.media_xml_start.format(main_include="SearchHistory")
-        for _, spath in active_spaths:
-            body = xmls.history_xml_body
-            body = body.format(spath=spath)
-            final_format += body
-        final_format += xmls.media_xml_end
-        self.write_xml(xml_file, final_format)
-        xbmc.executebuiltin("ReloadSkin()")
-        if event is not None:
-            event.set()
+        else:
+            xml_file = "special://skin/xml/%s.xml" % search_history_xml
+            final_format = xmls.media_xml_start.format(main_include="SearchHistory")
+            for _, spath in active_spaths:
+                final_format += xmls.history_xml_body.format(spath=escape(spath))
+            final_format += xmls.media_xml_end
+            self.write_xml(xml_file, final_format)
+        self.refresh_spaths = False
 
     def write_xml(self, xml_file, final_format):
         with xbmcvfs.File(xml_file, "w") as f:
@@ -125,57 +123,57 @@ class SPaths:
         return result[0] if result else None
 
     def open_search_window(self):
-        if xbmcgui.getCurrentWindowId() == 10000:
-            xbmc.executebuiltin("ActivateWindow(1121)")
         if self.is_database_empty():
-            xbmc.executebuiltin("Skin.SetString(DatabaseStatus, 'Empty')")
-            xbmc.executebuiltin("Skin.SetString(SearchInputTraktEncoded, 'none')")
-            xbmc.executebuiltin("ReloadSkin()")
-            xbmc.sleep(200)
-            xbmc.executebuiltin("SetFocus(27400)")
+            xbmc.executebuiltin("Skin.SetString(DatabaseStatus,Empty)")
+            focus_id = 27400
         else:
             self.remake_search_history()
             xbmc.executebuiltin("Skin.Reset(DatabaseStatus)")
-            xbmc.executebuiltin("Skin.SetString(SearchInput,)")
-            xbmc.executebuiltin("Skin.SetString(SearchInputEncoded,)")
-            xbmc.executebuiltin("Skin.SetString(SearchInputTraktEncoded, 'none')")
-            xbmc.executebuiltin("ReloadSkin()")
+            focus_id = 803
+        xbmc.executebuiltin("Skin.Reset(SearchInput)")
+        xbmc.executebuiltin("Skin.Reset(SearchInputEncoded)")
+        xbmc.executebuiltin("Skin.SetString(SearchInputTraktEncoded,none)")
+        # Refresh compiled search-history includes before entering search.
+        xbmc.executebuiltin("ReloadSkin()")
+        xbmc.sleep(350)
+        if xbmcgui.getCurrentWindowId() == 10000:
+            xbmc.executebuiltin("ActivateWindow(1121)")
             xbmc.sleep(200)
-            xbmc.executebuiltin("SetFocus(803)")
+        xbmc.executebuiltin("SetFocus(%s)" % focus_id)
 
     def search_input(self, search_term=None):
         if search_term is None or not search_term.strip():
             prompt = "Search" if xbmcgui.getCurrentWindowId() == 10000 else "New Search"
             keyboard = xbmc.Keyboard("", prompt, False)
             keyboard.doModal()
-            if keyboard.isConfirmed():
-                xbmc.executebuiltin("Skin.Reset(DatabaseStatus)")
-                search_term = keyboard.getText()
-                if not search_term or not search_term.strip():
-                    return
-            else:
+            if not keyboard.isConfirmed():
                 return
+            search_term = keyboard.getText()
+        if not search_term or not search_term.strip():
+            return
+
         encoded_search_term = quote(search_term)
-        if xbmcgui.getCurrentWindowId() == 10000:
-            xbmc.executebuiltin("ActivateWindow(1121)")
         existing_spath = self.check_spath_exists(search_term)
         if existing_spath:
             self.remove_spath_from_database(existing_spath)
         self.add_spath_to_database(search_term)
-        if xbmcgui.getCurrentWindowId() == 10000:
-            self.make_search_history_xml(self.fetch_all_spaths())
-        else:
-            event = Event()
-            Thread(
-                target=self.make_search_history_xml,
-                args=(self.fetch_all_spaths(), event),
-            ).start()
-            event.wait()
-        xbmc.executebuiltin(f"Skin.SetString(SearchInputEncoded,{encoded_search_term})")
+        self.make_search_history_xml(self.fetch_all_spaths())
+
+        xbmc.executebuiltin("Skin.Reset(DatabaseStatus)")
+        xbmc.executebuiltin(
+            f"Skin.SetString(SearchInputEncoded,{encoded_search_term})"
+        )
         xbmc.executebuiltin(
             f"Skin.SetString(SearchInputTraktEncoded,{encoded_search_term})"
         )
         xbmc.executebuiltin(f"Skin.SetString(SearchInput,{search_term})")
+        # Compile the new query and updated history in ONE reload, after all
+        # settings and files have been written. No worker thread races.
+        xbmc.executebuiltin("ReloadSkin()")
+        xbmc.sleep(350)
+        if xbmcgui.getCurrentWindowId() == 10000:
+            xbmc.executebuiltin("ActivateWindow(1121)")
+            xbmc.sleep(200)
         xbmc.executebuiltin("SetFocus(2000)")
 
     def re_search(self):
