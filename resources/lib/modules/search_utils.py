@@ -125,8 +125,8 @@ class SPaths:
             if pid != active:
                 xbmc.executebuiltin("Skin.SetString(current_search_provider,%s)" % pid)
                 self._clear_trakt_children()
+                # Refresh search results without reloading the skin.
                 self._refresh(results=True)
-                xbmc.executebuiltin("ReloadSkin()")
             return
         xbmcgui.Dialog().notification("FENtastic", "No enabled search providers")
 

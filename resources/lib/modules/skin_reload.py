@@ -25,7 +25,7 @@ class SkinReloadWorker:
 
     A minimum three-second interval applies to reloads initiated by FENtastic.
     Requests are coalesced: there is no backlog of delayed reloads.
-    Search (window 1121) never causes a skin reload here.
+    Search (windows 1121 and 11121) never causes a skin reload here.
     """
     def __init__(self, monitor):
         self.monitor = monitor
@@ -98,7 +98,7 @@ class SkinReloadWorker:
                 if self.monitor.waitForAbort(0.25):
                     return
                 continue
-            if xbmcgui.getCurrentWindowId() in (10035, 1121):
+            if xbmcgui.getCurrentWindowId() in (10035, 1121, 11121):
                 if self.monitor.waitForAbort(0.25):
                     return
                 continue
