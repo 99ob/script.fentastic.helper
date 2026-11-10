@@ -15,6 +15,9 @@ media_xml_body = '\
 \n            <param name="widget_header" value="{cpath_header}"/>\
 \n            <param name="widget_target" value="videos"/>\
 \n            <param name="list_id" value="{cpath_list_id}"/>\
+\n            <param name="focusable_header" value="{focusable_header}"/>\
+\n            <param name="previous_list_id" value="{previous_list_id}"/>\
+\n            <param name="previous_stacked_list_id" value="{previous_stacked_list_id}"/>\
 \n        </include>'
 
 history_xml_body = "\
@@ -30,6 +33,9 @@ stacked_media_xml_body = '\
 \n            <param name="widget_header" value="{cpath_header}"/>\
 \n            <param name="widget_target" value="videos"/>\
 \n            <param name="list_id" value="{cpath_list_id}"/>\
+\n            <param name="focusable_header" value="{focusable_header}"/>\
+\n            <param name="previous_list_id" value="{previous_list_id}"/>\
+\n            <param name="previous_stacked_list_id" value="{previous_stacked_list_id}"/>\
 \n        </include>\
 \n        <include content="{cpath_type}">\
 \n            <param name="content_path" value="$INFO[Window(Home).Property(fentastic.{cpath_list_id}.path)]"/>\
@@ -146,3 +152,5 @@ default_history = '\
 \n</includes>'
 
 # FENTASTIC_DIRECT_WIDGETS_RELOAD_GUARD_V1: native provider listing URLs; no persistent widget proxy.
+
+# FENTASTIC_CHARCOAL_HEADER_FOCUS_V1

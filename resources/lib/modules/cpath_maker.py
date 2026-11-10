@@ -229,6 +229,7 @@ class CPaths:
         suffix, _, _, base_id = _SECTION_INFO[self.media_type]
         xml_file = "special://skin/xml/script-fentastic-widget_%s.xml" % suffix
         final_format = xmls.media_xml_start.format(main_include=self.main_include)
+        previous_list_id = None
         for index, entry in active_cpaths.items():
             list_id = base_id + index
             body = (xmls.stacked_media_xml_body if "Stacked" in entry["cpath_label"]
@@ -238,10 +239,15 @@ class CPaths:
                 cpath_path=revision_url(entry["cpath_path"], list_id),
                 cpath_header=entry["cpath_header"],
                 cpath_list_id=list_id,
+                focusable_header="true" if previous_list_id is not None else "false",
+                previous_list_id=previous_list_id or 0,
+                previous_stacked_list_id=(str(previous_list_id) + "1"
+                                          if previous_list_id is not None else 0),
             )
             if "&amp;" not in body:
                 body = body.replace("&", "&amp;")
             final_format += body
+            previous_list_id = list_id
         final_format += xmls.media_xml_end
         self.write_xml(xml_file, final_format, reload_skin=reload_skin)
 
@@ -615,3 +621,5 @@ def show_busy_dialog():
 def hide_busy_dialog():
     xbmc.executebuiltin("Dialog.Close(busydialognocancel)")
     xbmc.executebuiltin("Dialog.Close(busydialog)")
+
+# FENTASTIC_CHARCOAL_HEADER_FOCUS_V1: display/navigation only; manual remake entrypoints unchanged.
