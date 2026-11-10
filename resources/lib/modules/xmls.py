@@ -15,6 +15,8 @@ media_xml_body = '\
 \n            <param name="widget_header" value="{cpath_header}"/>\
 \n            <param name="widget_target" value="videos"/>\
 \n            <param name="list_id" value="{cpath_list_id}"/>\
+            <param name="has_next_header" value="{has_next_header}"/>\
+            <param name="next_header_id" value="{next_header_id}"/>\
 \n            <param name="focusable_header" value="{focusable_header}"/>\
 \n            <param name="previous_list_id" value="{previous_list_id}"/>\
 \n            <param name="previous_stacked_list_id" value="{previous_stacked_list_id}"/>\
@@ -42,6 +44,8 @@ stacked_media_xml_body = '\
 \n            <param name="widget_header" value="$INFO[Window(Home).Property(fentastic.{cpath_list_id}.label)]"/>\
 \n            <param name="widget_target" value="videos"/>\
 \n            <param name="list_id" value="{cpath_list_id}1"/>\
+            <param name="has_next_header" value="{has_next_header}"/>\
+            <param name="next_header_id" value="{next_header_id}"/>\
 \n        </include>'
 
 main_menu_movies_xml = '\

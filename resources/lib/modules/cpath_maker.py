@@ -230,8 +230,12 @@ class CPaths:
         xml_file = "special://skin/xml/script-fentastic-widget_%s.xml" % suffix
         final_format = xmls.media_xml_start.format(main_include=self.main_include)
         previous_list_id = None
-        for index, entry in active_cpaths.items():
+        # FENTASTIC_CHARCOAL_DOWN_SNAPSHOT_V4: only widgets with a following row get a snapshot-navigation target.
+        ordered_cpaths = list(active_cpaths.items())
+        for row_position, (index, entry) in enumerate(ordered_cpaths):
             list_id = base_id + index
+            next_list_id = (base_id + ordered_cpaths[row_position + 1][0]
+                            if row_position + 1 < len(ordered_cpaths) else None)
             body = (xmls.stacked_media_xml_body if "Stacked" in entry["cpath_label"]
                     else xmls.media_xml_body)
             body = body.format(
@@ -239,6 +243,9 @@ class CPaths:
                 cpath_path=revision_url(entry["cpath_path"], list_id),
                 cpath_header=entry["cpath_header"],
                 cpath_list_id=list_id,
+                has_next_header="true" if next_list_id is not None else "false",
+                next_header_id=(str(next_list_id) + "664"
+                                if next_list_id is not None else 0),
                 focusable_header="true" if previous_list_id is not None else "false",
                 previous_list_id=previous_list_id or 0,
                 previous_stacked_list_id=(str(previous_list_id) + "1"
