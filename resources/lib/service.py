@@ -56,13 +56,12 @@ class RatingsService(xbmc.Monitor):
                 self.get_infolabel(prefix + "Property(imdb_id)"))
 
     def _selected_imdb_id(self):
-        """The original widget supplies the IMDb identity on poster and charcoal.
+        """Resolve IMDb identity from the selected poster or charcoal source.
 
-        A charcoal header is a real Kodi button whose ID is '<row_id>664'.
-        Each header permanently binds to the previous live widget and reports
-        only that numeric ID (not any movie data) to Helper on focus.
-        A source failure is explicit: never fall back to focused ListItem on
-        charcoal (that would be the header/next row, not the selected movie).
+        For supported movie/TV charcoal headers, the last focused adjacent
+        row determines which widget supplies metadata (including navigation
+        from the row below). Other headers retain legacy widget-ID routing.
+        Never use the focused header's ListItem as a metadata fallback.
         """
         if self.get_window_id() != 10000:
             return self._imdb_label("ListItem.")
@@ -78,25 +77,28 @@ class RatingsService(xbmc.Monitor):
         if control_text.endswith("664"):
             header_list_id = int(control_text[:-3])
             if any(base < header_list_id <= base + 10 for base in bases):
+                # FENTASTIC_CHARCOAL_DIRECTIONAL_V12: movie/TV headers share
+                # direction-aware metadata routing; do not require widget_id.
+                directional_pairs = {
+                    19012664: (19011, 19012),
+                    19013664: (19012, 19013),
+                    19014664: (19013, 19014),
+                    22012664: (22011, 22012),
+                    22013664: (22012, 22013),
+                }
+                pair = directional_pairs.get(control_id)
+                if pair is not None:
+                    before_row, after_row = pair
+                    last_row = self.get_infolabel(
+                        "Window(Home).Property(fentastic.diag.v7.last_list)")
+                    source_row = after_row if last_row == str(after_row) else before_row
+                    return self._imdb_label("Container(%s).ListItem." % source_row)
+                # Legacy routing for other charcoal headers stays unchanged.
                 try:
                     widget_id = int(self.get_infolabel(
                         "Window(Home).Property(fentastic.charcoal.widget_id)"))
                 except (TypeError, ValueError):
                     return ""
-                # FENTASTIC_CHARCOAL_TV_UNIVERSAL_V11: use the last focused adjacent TV row.
-                _v11_tv_pairs = {22012664: (22011, 22012), 22013664: (22012, 22013)}
-                if control_id in _v11_tv_pairs:
-                    _v11_before, _v11_after = _v11_tv_pairs[control_id]
-                    _v11_last = self.get_infolabel("Window(Home).Property(fentastic.diag.v7.last_list)")
-                    _v11_source = _v11_after if _v11_last == str(_v11_after) else _v11_before
-                    return self._imdb_label("Container(%s).ListItem." % _v11_source)
-                # FENTASTIC_CHARCOAL_UNIVERSAL_V9: match the V7 last focused list, all movie headers.
-                _v9_movie_pairs = {19012664: (19011, 19012), 19013664: (19012, 19013), 19014664: (19013, 19014)}
-                if control_id in _v9_movie_pairs:
-                    _v9_owner, _v9_next = _v9_movie_pairs[control_id]
-                    _v9_last = self.get_infolabel("Window(Home).Property(fentastic.diag.v7.last_list)")
-                    _v9_source = _v9_next if _v9_last == str(_v9_next) else _v9_owner
-                    return self._imdb_label("Container(%s).ListItem." % _v9_source)
                 # Validate the same section and that this header follows its row.
                 if not any(base < header_list_id <= base + 10 and (
                     base < widget_id < header_list_id or
