@@ -18,6 +18,17 @@ empty_ratings = {
 }
 
 
+# Movie/TV charcoal headers: (row above, row below).
+# Keep synchronized with the skin's directional header rules.
+CHARCOAL_DIRECTIONAL_PAIRS = {
+    19012664: (19011, 19012),
+    19013664: (19012, 19013),
+    19014664: (19013, 19014),
+    22012664: (22011, 22012),
+    22013664: (22012, 22013),
+}
+
+
 class RatingsService(xbmc.Monitor):
     """One MDbList network worker, latest-selection queue, GUI writes on monitor."""
     def __init__(self):
@@ -79,14 +90,7 @@ class RatingsService(xbmc.Monitor):
             if any(base < header_list_id <= base + 10 for base in bases):
                 # FENTASTIC_CHARCOAL_DIRECTIONAL_V12: movie/TV headers share
                 # direction-aware metadata routing; do not require widget_id.
-                directional_pairs = {
-                    19012664: (19011, 19012),
-                    19013664: (19012, 19013),
-                    19014664: (19013, 19014),
-                    22012664: (22011, 22012),
-                    22013664: (22012, 22013),
-                }
-                pair = directional_pairs.get(control_id)
+                pair = CHARCOAL_DIRECTIONAL_PAIRS.get(control_id)
                 if pair is not None:
                     before_row, after_row = pair
                     last_row = self.get_infolabel(
