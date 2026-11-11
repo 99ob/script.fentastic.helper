@@ -6,8 +6,6 @@ continue to use the existing coordinated reload request (no new ReloadSkin).
 """
 import json
 import sqlite3 as database
-from html import unescape
-from xml.sax.saxutils import escape
 
 import xbmc
 import xbmcgui
@@ -89,11 +87,6 @@ def _mark_widget_schema(xml_text):
         raise RuntimeError("Expected exactly one generated XML includes root")
     return xml_text.replace("<includes>",
                             "<includes>\n    <!-- %s -->" % WIDGET_XML_SCHEMA, 1)
-
-
-def _xml_attr(value):
-    """Encode saved URLs/labels once, including mixed raw and escaped ampersands."""
-    return escape(unescape(str(value)), {'"': '&quot;', "'": '&apos;'})
 
 
 def _strip_markup(label):
@@ -227,9 +220,11 @@ class CPaths:
         template = getattr(xmls, "main_menu_%s_xml" % suffix)
         entry = active_cpaths[self.media_type + ".main_menu"]
         final_format = template.format(
-            main_menu_path=_xml_attr(entry["cpath_path"]),
-            cpath_header=_xml_attr(entry.get("cpath_header", "")),
+            main_menu_path=entry["cpath_path"],
+            cpath_header=entry.get("cpath_header", ""),
         )
+        if "&amp;" not in final_format:
+            final_format = final_format.replace("&", "&amp;")
         self.write_xml(xml_file, final_format, reload_skin=reload_skin)
         self.update_skin_strings()
 
@@ -256,8 +251,8 @@ class CPaths:
                     else xmls.media_xml_body)
             body = body.format(
                 cpath_type=entry["cpath_type"],
-                cpath_path=_xml_attr(revision_url(entry["cpath_path"], list_id)),
-                cpath_header=_xml_attr(entry["cpath_header"]),
+                cpath_path=revision_url(entry["cpath_path"], list_id),
+                cpath_header=entry["cpath_header"],
                 cpath_list_id=list_id,
                 has_next_header="true" if next_list_id is not None else "false",
                 next_header_id=(str(next_list_id) + "664"
@@ -268,27 +263,24 @@ class CPaths:
                 previous_stacked_list_id=(str(previous_list_id) + "1"
                                           if previous_list_id is not None else 0),
             )
+            if "&amp;" not in body:
+                body = body.replace("&", "&amp;")
             final_format += body
-            # One permanently widget-owned panel survives either focus state:
-            # its poster, or the following charcoal header. This is visual
-            # focus only; selected media is NEVER copied into a property.
-            widget_id = (int(str(list_id) + "1")
-                         if "Stacked" in entry["cpath_label"] else list_id)
-            header_id = (str(next_list_id) + "664"
-                         if next_list_id is not None else "0")
-            charcoal_panels.append(
-                '        <include content="FentasticCharcoalLivePanel">\n'
-                '            <param name="widget_id" value="%s"/>\n'
-                '            <param name="header_id" value="%s"/>\n'
-                '        </include>' % (widget_id, header_id)
-            )
-            charcoal_fanart.append(
-                '        <value condition="Control.HasFocus(%s) | Control.HasFocus(%s)">'
-                '$INFO[Container(%s).ListItem.Art(fanart)]</value>' %
-                (widget_id, header_id, widget_id)
-            )
+            if previous_list_id is not None:
+                header_id = str(list_id) + "664"
+                charcoal_panels.append(
+                    '        <include content="FentasticCharcoalLivePanel">\n'
+                    '            <param name="widget_id" value="%s"/>\n'
+                    '            <param name="header_id" value="%s"/>\n'
+                    '        </include>' % (previous_widget_id, header_id)
+                )
+                charcoal_fanart.append(
+                    '        <value condition="Control.HasFocus(%s)">'
+                    '$INFO[Container(%s).ListItem.Art(fanart)]</value>' %
+                    (header_id, previous_widget_id)
+                )
             previous_list_id = list_id
-            previous_widget_id = widget_id
+            previous_widget_id = int(str(list_id) + "1") if "Stacked" in entry["cpath_label"] else list_id
         final_format += xmls.media_xml_end
         # The charcoal controls use live references in the generated XML, never
         # window-property snapshots. Header-to-widget mapping is exact even

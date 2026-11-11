@@ -10,7 +10,7 @@ import xbmc
 
 
 RELOAD_REQUEST_PROPERTY = "fentastic.skin_reload.request_ns"
-WIDGET_XML_SCHEMA = "FENTASTIC_CHARCOAL_LIVE_XML_SCHEMA_V3"
+WIDGET_XML_SCHEMA = "FENTASTIC_CHARCOAL_LIVE_XML_SCHEMA_V2"
 
 
 def request_skin_reload(reason="widget configuration"):
