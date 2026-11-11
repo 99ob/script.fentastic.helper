@@ -58,8 +58,9 @@ class RatingsService(xbmc.Monitor):
     def _selected_imdb_id(self):
         """The original widget supplies the IMDb identity on poster and charcoal.
 
-        A charcoal header is a real Kodi button whose ID is '<row_id>664'. Its
-        onfocus action supplies the *previous* widget ID as unified.source.
+        A charcoal header is a real Kodi button whose ID is '<row_id>664'.
+        Each header permanently binds to the previous live widget and reports
+        only that numeric ID (not any movie data) to Helper on focus.
         A source failure is explicit: never fall back to focused ListItem on
         charcoal (that would be the header/next row, not the selected movie).
         """
@@ -79,12 +80,14 @@ class RatingsService(xbmc.Monitor):
             if any(base < header_list_id <= base + 10 for base in bases):
                 try:
                     widget_id = int(self.get_infolabel(
-                        "Window(Home).Property(fentastic.unified.source)"))
+                        "Window(Home).Property(fentastic.charcoal.widget_id)"))
                 except (TypeError, ValueError):
                     return ""
                 # Validate the same section and that this header follows its row.
-                if not any(base < widget_id < header_list_id <= base + 10
-                           for base in bases):
+                if not any(base < header_list_id <= base + 10 and (
+                    base < widget_id < header_list_id or
+                    (widget_id % 10 == 1 and base < widget_id // 10 < header_list_id))
+                    for base in bases):
                     return ""
                 return self._imdb_label("Container(%s).ListItem." % widget_id)
         if self.get_visibility("String.IsEqual(Window(Home).Property(fentastic.charcoal.active),yes)"):

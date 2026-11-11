@@ -18,7 +18,7 @@ media_xml_body = '\
             <param name="has_next_header" value="{has_next_header}"/>\
             <param name="next_header_id" value="{next_header_id}"/>\
 \n            <param name="focusable_header" value="{focusable_header}"/>\
-\n            <param name="previous_list_id" value="{previous_list_id}"/>\
+\n            <param name="previous_list_id" value="{previous_list_id}"/>\n            <param name="previous_widget_id" value="{previous_widget_id}"/>\
 \n            <param name="previous_stacked_list_id" value="{previous_stacked_list_id}"/>\
 \n        </include>'
 
@@ -36,7 +36,7 @@ stacked_media_xml_body = '\
 \n            <param name="widget_target" value="videos"/>\
 \n            <param name="list_id" value="{cpath_list_id}"/>\
 \n            <param name="focusable_header" value="{focusable_header}"/>\
-\n            <param name="previous_list_id" value="{previous_list_id}"/>\
+\n            <param name="previous_list_id" value="{previous_list_id}"/>\n            <param name="previous_widget_id" value="{previous_widget_id}"/>\
 \n            <param name="previous_stacked_list_id" value="{previous_stacked_list_id}"/>\
 \n        </include>\
 \n        <include content="{cpath_type}">\
@@ -139,6 +139,11 @@ default_widget = '\
 \n<includes>\
 \n    <include name="{includes_type}">\
 \n    </include>\
+\n    <include name="FentasticCharcoalPanels{includes_type}">\
+\n    </include>\
+\n    <variable name="FentasticCharcoalFanart{includes_type}">\
+\n        <value></value>\
+\n    </variable>\
 \n</includes>'
 
 default_main_menu = '\

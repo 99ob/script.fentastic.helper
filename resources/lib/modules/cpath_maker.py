@@ -230,7 +230,10 @@ class CPaths:
         xml_file = "special://skin/xml/script-fentastic-widget_%s.xml" % suffix
         final_format = xmls.media_xml_start.format(main_include=self.main_include)
         previous_list_id = None
-        # FENTASTIC_CHARCOAL_DOWN_SNAPSHOT_V4: only widgets with a following row get a snapshot-navigation target.
+        previous_widget_id = None
+        # Bind each header to its actual previous row (IDs may be sparse).
+        charcoal_panels = []
+        charcoal_fanart = []
         ordered_cpaths = list(active_cpaths.items())
         for row_position, (index, entry) in enumerate(ordered_cpaths):
             list_id = base_id + index
@@ -248,14 +251,41 @@ class CPaths:
                                 if next_list_id is not None else 0),
                 focusable_header="true" if previous_list_id is not None else "false",
                 previous_list_id=previous_list_id or 0,
+                previous_widget_id=previous_widget_id or 0,
                 previous_stacked_list_id=(str(previous_list_id) + "1"
                                           if previous_list_id is not None else 0),
             )
             if "&amp;" not in body:
                 body = body.replace("&", "&amp;")
             final_format += body
+            if previous_list_id is not None:
+                header_id = str(list_id) + "664"
+                charcoal_panels.append(
+                    '        <include content="FentasticCharcoalLivePanel">\n'
+                    '            <param name="widget_id" value="%s"/>\n'
+                    '            <param name="header_id" value="%s"/>\n'
+                    '        </include>' % (previous_widget_id, header_id)
+                )
+                charcoal_fanart.append(
+                    '        <value condition="Control.HasFocus(%s)">'
+                    '$INFO[Container(%s).ListItem.Art(fanart)]</value>' %
+                    (header_id, previous_widget_id)
+                )
             previous_list_id = list_id
+            previous_widget_id = int(str(list_id) + "1") if "Stacked" in entry["cpath_label"] else list_id
         final_format += xmls.media_xml_end
+        # The charcoal controls use live references in the generated XML, never
+        # window-property snapshots. Header-to-widget mapping is exact even
+        # with gaps in configured widget row numbers.
+        extra = ('\n    <include name="FentasticCharcoalPanels%s">\n%s\n'
+                 '    </include>\n'
+                 '    <variable name="FentasticCharcoalFanart%s">\n%s\n'
+                 '        <value></value>\n    </variable>\n') % (
+                    self.main_include, '\n'.join(charcoal_panels),
+                    self.main_include, '\n'.join(charcoal_fanart))
+        if not final_format.endswith('</includes>'):
+            raise RuntimeError('Unexpected generated widget XML end')
+        final_format = final_format[:-len('</includes>')] + extra + '</includes>'
         self.write_xml(xml_file, final_format, reload_skin=reload_skin)
 
     def write_xml(self, xml_file, final_format, reload_skin=True):
