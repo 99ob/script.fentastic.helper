@@ -56,20 +56,40 @@ class RatingsService(xbmc.Monitor):
                 self.get_infolabel(prefix + "Property(imdb_id)"))
 
     def _selected_imdb_id(self):
-        """Identify the selected item, including focused home widget rows."""
-        primary = self._imdb_label("ListItem.")
+        """The original widget supplies the IMDb identity on poster and charcoal.
+
+        A charcoal header is a real Kodi button whose ID is '<row_id>664'. Its
+        onfocus action supplies the *previous* widget ID as unified.source.
+        A source failure is explicit: never fall back to focused ListItem on
+        charcoal (that would be the header/next row, not the selected movie).
+        """
         if self.get_window_id() != 10000:
-            return primary
+            return self._imdb_label("ListItem.")
         try:
             control_id = int(self.get_infolabel("System.CurrentControlId"))
         except (TypeError, ValueError):
-            return primary
-        if any(base < control_id <= base + 10 for base in
-               (19010, 22010, 23010, 24010, 25010)):
-            item_id = self._imdb_label("Container(%s).ListItem." % control_id)
-            if item_id.startswith("tt"):
-                return item_id
-        return primary
+            return self._imdb_label("ListItem.")
+        bases = (19010, 22010, 23010, 24010, 25010)
+        if any(base < control_id <= base + 10 for base in bases):
+            # Selected poster: read the widget itself, not an unrelated row.
+            return self._imdb_label("Container(%s).ListItem." % control_id)
+        control_text = str(control_id)
+        if control_text.endswith("664"):
+            header_list_id = int(control_text[:-3])
+            if any(base < header_list_id <= base + 10 for base in bases):
+                try:
+                    widget_id = int(self.get_infolabel(
+                        "Window(Home).Property(fentastic.unified.source)"))
+                except (TypeError, ValueError):
+                    return ""
+                # Validate the same section and that this header follows its row.
+                if not any(base < widget_id < header_list_id <= base + 10
+                           for base in bases):
+                    return ""
+                return self._imdb_label("Container(%s).ListItem." % widget_id)
+        if self.get_visibility("String.IsEqual(Window(Home).Property(fentastic.charcoal.active),yes)"):
+            return ""  # Invalid charcoal focus identity: do NOT use another ListItem.
+        return self._imdb_label("ListItem.")
 
     def _ratings_worker(self):
         """Reuse one HTTP session without unbounded ratings threads."""
