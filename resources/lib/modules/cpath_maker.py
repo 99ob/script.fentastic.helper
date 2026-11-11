@@ -12,7 +12,7 @@ import xbmcgui
 import xbmcvfs
 
 from modules import xmls
-from modules.skin_reload import request_skin_reload
+from modules.skin_reload import request_skin_reload, WIDGET_XML_SCHEMA
 from modules.widget_refresh import revision_url
 
 
@@ -79,6 +79,14 @@ default_path = "addons://sources/video"
 
 def _cpath_dict(row):
     return dict(zip(_CPATH_COLUMNS, row))
+
+
+def _mark_widget_schema(xml_text):
+    """Mark regenerated live-widget bindings; not a movie-data cache."""
+    if xml_text.count("<includes>") != 1:
+        raise RuntimeError("Expected exactly one generated XML includes root")
+    return xml_text.replace("<includes>",
+                            "<includes>\n    <!-- %s -->" % WIDGET_XML_SCHEMA, 1)
 
 
 def _strip_markup(label):
@@ -200,12 +208,12 @@ class CPaths:
             return selected
         return self.path_browser(**selected)
 
-    def make_main_menu_xml(self, active_cpaths):
+    def make_main_menu_xml(self, active_cpaths, reload_skin=True):
         if not self.refresh_cpaths:
             return
         if not active_cpaths:
             # Avoid generating a second, invalid menu after writing the default.
-            self.make_default_xml()
+            self.make_default_xml(reload_skin=reload_skin)
             return
         suffix = _SECTION_INFO[self.media_type][0]
         xml_file = "special://skin/xml/script-fentastic-main_menu_%s.xml" % suffix
@@ -217,14 +225,14 @@ class CPaths:
         )
         if "&amp;" not in final_format:
             final_format = final_format.replace("&", "&amp;")
-        self.write_xml(xml_file, final_format)
+        self.write_xml(xml_file, final_format, reload_skin=reload_skin)
         self.update_skin_strings()
 
     def make_widget_xml(self, active_cpaths, reload_skin=True):
         if not self.refresh_cpaths:
             return
         if not active_cpaths:
-            self.make_default_xml()
+            self.make_default_xml(reload_skin=reload_skin)
             return
         suffix, _, _, base_id = _SECTION_INFO[self.media_type]
         xml_file = "special://skin/xml/script-fentastic-widget_%s.xml" % suffix
@@ -286,7 +294,7 @@ class CPaths:
         if not final_format.endswith('</includes>'):
             raise RuntimeError('Unexpected generated widget XML end')
         final_format = final_format[:-len('</includes>')] + extra + '</includes>'
-        self.write_xml(xml_file, final_format, reload_skin=reload_skin)
+        self.write_xml(xml_file, _mark_widget_schema(final_format), reload_skin=reload_skin)
 
     def write_xml(self, xml_file, final_format, reload_skin=True):
         if xbmcvfs.exists(xml_file):
@@ -597,13 +605,15 @@ class CPaths:
         else:
             self.make_default_xml()
 
-    def make_default_xml(self):
+    def make_default_xml(self, reload_skin=True):
         item = default_xmls[self.cpath_setting]
         final_format = item[1].format(includes_type=item[2])
+        if self.path_type == "widget":
+            final_format = _mark_widget_schema(final_format)
         xml_file = "special://skin/xml/%s.xml" % item[0]
         changed = self.write_xml(xml_file, final_format, reload_skin=False)
         self.update_skin_strings()
-        if changed:
+        if changed and reload_skin:
             self.reload_skin()
 
 
