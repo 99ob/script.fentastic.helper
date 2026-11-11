@@ -83,6 +83,20 @@ class RatingsService(xbmc.Monitor):
                         "Window(Home).Property(fentastic.charcoal.widget_id)"))
                 except (TypeError, ValueError):
                     return ""
+                # FENTASTIC_CHARCOAL_TV_UNIVERSAL_V11: use the last focused adjacent TV row.
+                _v11_tv_pairs = {22012664: (22011, 22012), 22013664: (22012, 22013)}
+                if control_id in _v11_tv_pairs:
+                    _v11_before, _v11_after = _v11_tv_pairs[control_id]
+                    _v11_last = self.get_infolabel("Window(Home).Property(fentastic.diag.v7.last_list)")
+                    _v11_source = _v11_after if _v11_last == str(_v11_after) else _v11_before
+                    return self._imdb_label("Container(%s).ListItem." % _v11_source)
+                # FENTASTIC_CHARCOAL_UNIVERSAL_V9: match the V7 last focused list, all movie headers.
+                _v9_movie_pairs = {19012664: (19011, 19012), 19013664: (19012, 19013), 19014664: (19013, 19014)}
+                if control_id in _v9_movie_pairs:
+                    _v9_owner, _v9_next = _v9_movie_pairs[control_id]
+                    _v9_last = self.get_infolabel("Window(Home).Property(fentastic.diag.v7.last_list)")
+                    _v9_source = _v9_next if _v9_last == str(_v9_next) else _v9_owner
+                    return self._imdb_label("Container(%s).ListItem." % _v9_source)
                 # Validate the same section and that this header follows its row.
                 if not any(base < header_list_id <= base + 10 and (
                     base < widget_id < header_list_id or
