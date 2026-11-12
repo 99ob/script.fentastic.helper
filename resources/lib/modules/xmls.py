@@ -140,6 +140,7 @@ default_widget = '\
 \n    <include name="{includes_type}">\
 \n    </include>\
 \n    <include name="FentasticCharcoalPanels{includes_type}">\
+\n        <control type="group"><width>1</width><height>1</height><visible>false</visible></control>\
 \n    </include>\
 \n    <variable name="FentasticCharcoalFanart{includes_type}">\
 \n        <value></value>\
@@ -163,3 +164,5 @@ default_history = '\
 # FENTASTIC_DIRECT_WIDGETS_RELOAD_GUARD_V1: native provider listing URLs; no persistent widget proxy.
 
 # FENTASTIC_CHARCOAL_HEADER_FOCUS_V1
+
+# FENTASTIC_GENERATED_XML_SAFETY_V1: nonempty default charcoal panel.
