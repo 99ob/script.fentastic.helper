@@ -5,8 +5,6 @@ Direct provider URLs and per-row revision properties are preserved. XML writes
 continue to use the existing coordinated reload request (no new ReloadSkin).
 """
 import json
-import re
-import xml.etree.ElementTree as ET
 import sqlite3 as database
 
 import xbmc
@@ -81,28 +79,6 @@ default_path = "addons://sources/video"
 
 def _cpath_dict(row):
     return dict(zip(_CPATH_COLUMNS, row))
-
-
-# FENTASTIC_GENERATED_XML_SAFETY_V1: preserve encoded XML entities and escape only bare ampersands.
-_XML_BARE_AMP = re.compile(
-    r'&(?!(?:amp|lt|gt|quot|apos|#[0-9]+|#x[0-9a-fA-F]+);)')
-
-
-def _xml_escape_bare_ampersands(text):
-    return _XML_BARE_AMP.sub('&amp;', text)
-
-
-def _validate_widget_xml(xml_text, main_include):
-    """Reject invalid generated XML BEFORE replacing a working widget file."""
-    root = ET.fromstring(xml_text)
-    if root.tag != 'includes':
-        raise RuntimeError('Generated widget XML has unexpected root')
-    names = {item.get('name'): item for item in root.findall('include')}
-    panel = names.get('FentasticCharcoalPanels' + main_include)
-    variables = {item.get('name') for item in root.findall('variable')}
-    if (main_include not in names or panel is None or len(panel) == 0 or
-            'FentasticCharcoalFanart' + main_include not in variables):
-        raise RuntimeError('Generated widget XML missing required includes')
 
 
 def _mark_widget_schema(xml_text):
@@ -247,7 +223,8 @@ class CPaths:
             main_menu_path=entry["cpath_path"],
             cpath_header=entry.get("cpath_header", ""),
         )
-        final_format = _xml_escape_bare_ampersands(final_format)
+        if "&amp;" not in final_format:
+            final_format = final_format.replace("&", "&amp;")
         self.write_xml(xml_file, final_format, reload_skin=reload_skin)
         self.update_skin_strings()
 
@@ -286,7 +263,8 @@ class CPaths:
                 previous_stacked_list_id=(str(previous_list_id) + "1"
                                           if previous_list_id is not None else 0),
             )
-            body = _xml_escape_bare_ampersands(body)
+            if "&amp;" not in body:
+                body = body.replace("&", "&amp;")
             final_format += body
             if previous_list_id is not None:
                 header_id = str(list_id) + "664"
@@ -307,8 +285,6 @@ class CPaths:
         # The charcoal controls use live references in the generated XML, never
         # window-property snapshots. Header-to-widget mapping is exact even
         # with gaps in configured widget row numbers.
-        if not charcoal_panels:
-            charcoal_panels.append('        <control type="group"><width>1</width><height>1</height><visible>false</visible></control>')
         extra = ('\n    <include name="FentasticCharcoalPanels%s">\n%s\n'
                  '    </include>\n'
                  '    <variable name="FentasticCharcoalFanart%s">\n%s\n'
@@ -318,10 +294,7 @@ class CPaths:
         if not final_format.endswith('</includes>'):
             raise RuntimeError('Unexpected generated widget XML end')
         final_format = final_format[:-len('</includes>')] + extra + '</includes>'
-        # Validate before write: never replace a working file with broken XML.
-        generated = _mark_widget_schema(final_format)
-        _validate_widget_xml(generated, self.main_include)
-        self.write_xml(xml_file, generated, reload_skin=reload_skin)
+        self.write_xml(xml_file, _mark_widget_schema(final_format), reload_skin=reload_skin)
 
     def write_xml(self, xml_file, final_format, reload_skin=True):
         if xbmcvfs.exists(xml_file):

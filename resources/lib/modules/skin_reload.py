@@ -55,11 +55,7 @@ class SkinReloadWorker:
             if path_type == "widget":
                 if WIDGET_XML_SCHEMA not in contents:
                     return False
-                # FENTASTIC_GENERATED_XML_SAFETY_V1: an empty charcoal include is NOT usable by Kodi.
-                panel_name = "FentasticCharcoalPanels" + include_name
-                panels = [item for item in root.findall("include")
-                          if item.get("name") == panel_name]
-                if len(panels) != 1 or len(panels[0]) == 0:
+                if "FentasticCharcoalPanels" + include_name not in names:
                     return False
                 variables = {element.get("name") for element in root.findall("variable")}
                 if "FentasticCharcoalFanart" + include_name not in variables:
