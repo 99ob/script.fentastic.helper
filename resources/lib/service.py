@@ -26,6 +26,11 @@ CHARCOAL_DIRECTIONAL_PAIRS = {
     19014664: (19013, 19014),
     22012664: (22011, 22012),
     22013664: (22012, 22013),
+    # FENTASTIC_CUSTOM_DIRECTIONAL_ALL_V1
+    23012664: (23011, 23012),  # Custom 1
+    24012664: (24011, 24012),  # Custom 2
+    25012664: (25011, 25012),  # Custom 3
+
 }
 
 
@@ -67,51 +72,44 @@ class RatingsService(xbmc.Monitor):
                 self.get_infolabel(prefix + "Property(imdb_id)"))
 
     def _selected_imdb_id(self):
-        """Resolve IMDb identity from the selected poster or charcoal source.
+        """FENTASTIC_CHARCOAL_GLOBAL_IMDB_V1: use the focused header's live owner.
 
-        For supported movie/TV charcoal headers, the last focused adjacent
-        row determines which widget supplies metadata (including navigation
-        from the row below). Other headers retain legacy widget-ID routing.
-        Never use the focused header's ListItem as a metadata fallback.
+        There are no hard-coded header-to-row pairs here. The shared header
+        focus control sets charcoal.widget_id for either travel direction,
+        including sparse widget IDs (e.g. 25012 -> 25016).
         """
         if self.get_window_id() != 10000:
             return self._imdb_label("ListItem.")
         try:
-            control_id = int(self.get_infolabel("System.CurrentControlId"))
-        except (TypeError, ValueError):
+            focused = int(self.get_infolabel("System.CurrentControlId"))
+        except (ValueError, TypeError):
             return self._imdb_label("ListItem.")
-        bases = (19010, 22010, 23010, 24010, 25010)
-        if any(base < control_id <= base + 10 for base in bases):
-            # Selected poster: read the widget itself, not an unrelated row.
-            return self._imdb_label("Container(%s).ListItem." % control_id)
-        control_text = str(control_id)
-        if control_text.endswith("664"):
-            header_list_id = int(control_text[:-3])
-            if any(base < header_list_id <= base + 10 for base in bases):
-                # FENTASTIC_CHARCOAL_DIRECTIONAL_V12: movie/TV headers share
-                # direction-aware metadata routing; do not require widget_id.
-                pair = CHARCOAL_DIRECTIONAL_PAIRS.get(control_id)
-                if pair is not None:
-                    before_row, after_row = pair
-                    last_row = self.get_infolabel(
-                        "Window(Home).Property(fentastic.diag.v7.last_list)")
-                    source_row = after_row if last_row == str(after_row) else before_row
-                    return self._imdb_label("Container(%s).ListItem." % source_row)
-                # Legacy routing for other charcoal headers stays unchanged.
+        sections = (19, 22, 23, 24, 25)
+        def section(row):
+            return row // 1000 if 10000 <= row < 100000 else -1
+        if section(focused) in sections and 11 <= focused % 1000 <= 99:
+            return self._imdb_label("Container(%s).ListItem." % focused)
+        focused_text = str(focused)
+        if focused_text.endswith("664"):
+            row = int(focused_text[:-3])
+            if section(row) in sections:
                 try:
-                    widget_id = int(self.get_infolabel(
+                    owner = int(self.get_infolabel(
                         "Window(Home).Property(fentastic.charcoal.widget_id)"))
-                except (TypeError, ValueError):
+                    last = int(self.get_infolabel(
+                        "Window(Home).Property(fentastic.diag.v7.last_list)"))
+                except (ValueError, TypeError):
                     return ""
-                # Validate the same section and that this header follows its row.
-                if not any(base < header_list_id <= base + 10 and (
-                    base < widget_id < header_list_id or
-                    (widget_id % 10 == 1 and base < widget_id // 10 < header_list_id))
-                    for base in bases):
+                # Stacked widgets store their child control ID with an extra digit.
+                normalized = owner // 10 if owner >= 100000 else owner
+                if (section(normalized) != section(row) or
+                        normalized > row or normalized < section(row) * 1000 + 11 or
+                        normalized != last):
                     return ""
-                return self._imdb_label("Container(%s).ListItem." % widget_id)
+                return self._imdb_label("Container(%s).ListItem." % owner)
+            return ""
         if self.get_visibility("String.IsEqual(Window(Home).Property(fentastic.charcoal.active),yes)"):
-            return ""  # Invalid charcoal focus identity: do NOT use another ListItem.
+            return ""
         return self._imdb_label("ListItem.")
 
     def _ratings_worker(self):

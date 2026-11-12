@@ -278,17 +278,29 @@ class CPaths:
             final_format += body
             if previous_list_id is not None:
                 header_id = str(list_id) + "664"
-                charcoal_panels.append(
-                    '        <include content="FentasticCharcoalLivePanel">\n'
-                    '            <param name="widget_id" value="%s"/>\n'
-                    '            <param name="header_id" value="%s"/>\n'
-                    '        </include>' % (previous_widget_id, header_id)
-                )
-                charcoal_fanart.append(
-                    '        <value condition="Control.HasFocus(%s)">'
-                    '$INFO[Container(%s).ListItem.Art(fanart)]</value>' %
-                    (header_id, previous_widget_id)
-                )
+                current_widget_id = (int(str(list_id) + "1")
+                                     if "Stacked" in entry["cpath_label"] else list_id)
+                # Both sides of every charcoal header are generated automatically.
+                for widget_id, owner_id in ((previous_widget_id, previous_widget_id),
+                                            (current_widget_id, list_id)):
+                    charcoal_panels.append(
+                        '        <include content="FentasticCharcoalLivePanel">\n'
+                        '            <param name="widget_id" value="%s"/>\n'
+                        '            <param name="header_id" value="%s"/>\n'
+                        '            <param name="owner_id" value="%s"/>\n'
+                        '        </include>' % (widget_id, header_id, owner_id)
+                    )
+                for widget_id, from_lower in ((current_widget_id, True),
+                                               (previous_widget_id, False)):
+                    row_test = ('String.IsEqual(Window(Home).Property('
+                                'fentastic.diag.v7.last_list),%s)' % list_id)
+                    if not from_lower:
+                        row_test = '!' + row_test
+                    charcoal_fanart.append(
+                        '        <value condition="Control.HasFocus(%s) + %s">'
+                        '$INFO[Container(%s).ListItem.Art(fanart)]</value>' %
+                        (header_id, row_test, widget_id)
+                    )
             previous_list_id = list_id
             previous_widget_id = int(str(list_id) + "1") if "Stacked" in entry["cpath_label"] else list_id
         final_format += xmls.media_xml_end
@@ -304,7 +316,64 @@ class CPaths:
         if not final_format.endswith('</includes>'):
             raise RuntimeError('Unexpected generated widget XML end')
         final_format = final_format[:-len('</includes>')] + extra + '</includes>'
-        self.write_xml(xml_file, _mark_widget_schema(final_format), reload_skin=reload_skin)
+        # FENTASTIC_HEADER_FANART_SYNC_CALL_V3_BEGIN
+        _xml_changed = self.write_xml(xml_file, _mark_widget_schema(final_format), reload_skin=False)
+        _fanart_changed = self._sync_home_fanart_v3()
+        if reload_skin and (_xml_changed or _fanart_changed):
+            self.reload_skin()
+        # FENTASTIC_HEADER_FANART_SYNC_CALL_V3_END
+
+    # FENTASTIC_HEADER_FANART_SYNC_METHOD_V3_BEGIN
+    def _sync_home_fanart_v3(self):
+        """Update HomeFanartVar from the real generated header/widget pairs."""
+        import xml.etree.ElementTree as _ET
+        _start = "<!-- FENTASTIC_HEADER_FANART_SYNCHRONIZED_V3_BEGIN -->"
+        _end = "<!-- FENTASTIC_HEADER_FANART_SYNCHRONIZED_V3_END -->"
+        _lines = []
+        for _section in ("movies", "tvshows", "custom1", "custom2", "custom3"):
+            _f = "special://skin/xml/script-fentastic-widget_%s.xml" % _section
+            if not xbmcvfs.exists(_f):
+                return False
+            with xbmcvfs.File(_f, "r") as _stream:
+                _root = _ET.fromstring(_stream.read())
+            _var = [v for v in _root.iter("variable")
+                    if v.get("name", "").startswith("FentasticCharcoalFanart")]
+            if len(_var) != 1:
+                return False
+            for _item in _var[0].findall("value"):
+                _condition = _item.get("condition", "")
+                _content = (_item.text or "").strip()
+                _match = re.search(r"Control\.HasFocus\((\d+664)\)", _condition)
+                _src = re.fullmatch(r"\$INFO\[Container\((\d+)\)\.ListItem\.Art\(fanart\)\]", _content)
+                if not _match or not _src:
+                    continue
+                _other = _condition.replace(_match.group(0), "").strip()
+                if _other.startswith("+"):
+                    _other = _other[1:].strip()
+                if "fentastic.diag.v7.last_list" not in _other:
+                    return False
+                _guard = ("String.IsEqual(System.CurrentControlId,%s) + %s + "
+                          "!String.IsEmpty(Container(%s).ListItem.Art(fanart))" %
+                          (_match.group(1), _other, _src.group(1)))
+                _lines.append('        <value condition="%s">%s</value>' % (_guard, _content))
+        if not _lines:
+            return False
+        _path = "special://skin/xml/Variables.xml"
+        with xbmcvfs.File(_path, "r") as _f:
+            _old = _f.read()
+        if _old.count(_start) != 1 or _old.count(_end) != 1:
+            return False
+        _begin = _old.index(_start)
+        _finish = _old.index(_end, _begin) + len(_end)
+        _new = (_old[:_begin] + _start + "\n" + "\n".join(_lines)
+                + "\n        " + _end + _old[_finish:])
+        _ET.fromstring(_new)
+        if _new == _old:
+            return False
+        with xbmcvfs.File(_path, "w") as _f:
+            _f.write(_new)
+        return True
+    # FENTASTIC_HEADER_FANART_SYNC_METHOD_V3_END
 
     def write_xml(self, xml_file, final_format, reload_skin=True):
         if xbmcvfs.exists(xml_file):
