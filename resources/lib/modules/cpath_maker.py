@@ -5,6 +5,7 @@ Direct provider URLs and per-row revision properties are preserved. XML writes
 continue to use the existing coordinated reload request (no new ReloadSkin).
 """
 import json
+import re
 import sqlite3 as database
 
 import xbmc
@@ -88,6 +89,17 @@ def _mark_widget_schema(xml_text):
     return xml_text.replace("<includes>",
                             "<includes>\n    <!-- %s -->" % WIDGET_XML_SCHEMA, 1)
 
+
+
+
+def _escape_unescaped_xml_ampersands(text):
+    """Escape bare & without double-escaping existing XML entities.
+
+    Plugin URLs can contain both raw query separators and an already escaped
+    fentastic_rev separator. Every bare & must be escaped independently.
+    """
+    return re.sub(r"&(?!amp;|lt;|gt;|quot;|apos;|#(?:[0-9]+|x[0-9A-Fa-f]+);)",
+                  "&amp;", text)
 
 def _strip_markup(label):
     """Preserve the existing path browser text cleanup."""
@@ -223,8 +235,7 @@ class CPaths:
             main_menu_path=entry["cpath_path"],
             cpath_header=entry.get("cpath_header", ""),
         )
-        if "&amp;" not in final_format:
-            final_format = final_format.replace("&", "&amp;")
+        final_format = _escape_unescaped_xml_ampersands(final_format)
         self.write_xml(xml_file, final_format, reload_skin=reload_skin)
         self.update_skin_strings()
 
@@ -263,8 +274,7 @@ class CPaths:
                 previous_stacked_list_id=(str(previous_list_id) + "1"
                                           if previous_list_id is not None else 0),
             )
-            if "&amp;" not in body:
-                body = body.replace("&", "&amp;")
+            body = _escape_unescaped_xml_ampersands(body)
             final_format += body
             if previous_list_id is not None:
                 header_id = str(list_id) + "664"
